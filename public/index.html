@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Book a call</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b;
+    --line: #e4e4e0; --accent: #2563eb; --accent-ink: #ffffff; --ok: #16a34a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101012; --card: #1a1a1e; --ink: #ececec; --muted: #9a9aa2;
+            --line: #2a2a30; --accent: #3b82f6; --ok: #22c55e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  input, select, textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; margin: 6px 0 14px;
+  }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; width: 100%;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .day { margin: 22px 0 8px; font-weight: 700; }
+  .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .slot {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 4px; text-align: center; cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .slot:hover { border-color: var(--accent); color: var(--accent); }
+  .slot.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .tzbar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+  .tzbar select { margin: 0; flex: 1; }
+  .tzbar span { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+  .banner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); border: 1px solid var(--accent);
+            border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: .95rem; }
+  .err { color: #dc2626; margin: 8px 0; min-height: 1.2em; }
+  .ok-big { font-size: 2.4rem; }
+  a { color: var(--accent); }
+  .hidden { display: none; }
+  .back { background: none; color: var(--muted); width: auto; padding: 4px 0; font-weight: 400; text-decoration: underline; }
+  .spin { color: var(--muted); padding: 32px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- password gate -->
+  <div id="gate" class="hidden">
+    <h1>Book a call</h1>
+    <p class="sub">Enter the password from your invite link.</p>
+    <div class="card">
+      <input id="pw" type="password" placeholder="password" autocomplete="off" autofocus>
+      <div id="gateErr" class="err"></div>
+      <button id="pwGo">Continue</button>
+    </div>
+  </div>
+
+  <!-- slot picker -->
+  <div id="picker" class="hidden">
+    <h1 id="title">Book a call</h1>
+    <p class="sub" id="meta"></p>
+    <div id="goldBanner" class="banner hidden"></div>
+    <div class="tzbar">
+      <span>Times shown in</span>
+      <select id="tzSel"></select>
+    </div>
+    <div id="days"></div>
+    <div id="empty" class="spin hidden">No open times right now — check back soon.</div>
+  </div>
+
+  <!-- booking form -->
+  <div id="form" class="hidden">
+    <h1>Confirm your time</h1>
+    <p class="sub" id="chosen"></p>
+    <div class="card">
+      <label>Your name</label>
+      <input id="name" autocomplete="name" placeholder="Ada Lovelace">
+      <label>Email</label>
+      <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+      <label>Anything to prepare? <span style="color:var(--muted)">(optional)</span></label>
+      <textarea id="note" rows="3" placeholder="What would you like to talk about?"></textarea>
+      <div id="formErr" class="err"></div>
+      <button id="bookBtn">Book it</button>
+      <button class="back" id="backBtn">← pick a different time</button>
+    </div>
+  </div>
+
+  <!-- confirmation -->
+  <div id="done" class="hidden">
+    <div class="card" style="text-align:center">
+      <div class="ok-big">✅</div>
+      <h1 id="doneTitle">Booked!</h1>
+      <p id="doneWhen" class="sub"></p>
+      <p>A Google Calendar invite is on its way to your email.</p>
+      <p id="meetP" class="hidden"><a id="meetA" href="#" target="_blank" rel="noopener">Google Meet link</a></p>
+    </div>
+  </div>
+
+  <div id="loading" class="spin">Loading…</div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => ["gate","picker","form","done","loading"].forEach(x => $(x).classList.toggle("hidden", x !== id));
+
+  const m = location.pathname.match(/^\/a\/([^/]+)$/);
+  const token = m ? decodeURIComponent(m[1]) : null;
+  let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  let data = null, selected = null;
+
+  // ---- password gate ----
+  function gate(msg) {
+    show("gate");
+    $("gateErr").textContent = msg || "";
+    $("pw").focus();
+  }
+  $("pwGo").onclick = go;
+  $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  function go() {
+    const v = $("pw").value.trim();
+    if (v) location.href = "/a/" + encodeURIComponent(v);
+  }
+
+  // ---- picker ----
+  const fmtDay = (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(new Date(iso));
+  const fmtTime = (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+
+  function tzOptions() {
+    const sel = $("tzSel");
+    let zones = [];
+    try { zones = Intl.supportedValuesOf("timeZone"); } catch { zones = [guestTz, "UTC", data.ownerTz]; }
+    if (!zones.includes(guestTz)) zones.unshift(guestTz);
+    sel.innerHTML = zones.map(z => `<option ${z === guestTz ? "selected" : ""}>${z}</option>`).join("");
+    sel.onchange = () => { guestTz = sel.value; renderDays(); };
+  }
+
+  function renderDays() {
+    const byDay = new Map();
+    for (const s of data.slots) {
+      const k = fmtDay(s.startUtc, guestTz);
+      if (!byDay.has(k)) byDay.set(k, []);
+      byDay.get(k).push(s);
+    }
+    $("days").innerHTML = "";
+    $("empty").classList.toggle("hidden", data.slots.length > 0);
+    for (const [day, slots] of byDay) {
+      const h = document.createElement("div"); h.className = "day"; h.textContent = day;
+      const grid = document.createElement("div"); grid.className = "slots";
+      for (const s of slots) {
+        const b = document.createElement("div"); b.className = "slot";
+        b.textContent = fmtTime(s.startUtc, guestTz);
+        b.onclick = () => { selected = s; openForm(); };
+        grid.appendChild(b);
+      }
+      $("days").append(h, grid);
+    }
+  }
+
+  function openPicker() {
+    show("picker");
+    $("title").textContent = `Book a call with ${data.ownerName}`;
+    $("meta").textContent = `${data.durationMin}-minute call · pick a time below`;
+    if (data.pickAnything) {
+      $("goldBanner").classList.remove("hidden");
+      $("goldBanner").textContent = `Golden ticket: pick any time that works for you — ${data.ownerName} will move things around to be there.`;
+    }
+    tzOptions();
+    renderDays();
+  }
+
+  // ---- form ----
+  function openForm() {
+    show("form");
+    $("chosen").textContent = `${fmtDay(selected.startUtc, guestTz)} · ${fmtTime(selected.startUtc, guestTz)}–${fmtTime(selected.endUtc, guestTz)} (${guestTz})`;
+    $("formErr").textContent = "";
+    $("name").focus();
+  }
+  $("backBtn").onclick = () => show("picker");
+  $("bookBtn").onclick = async () => {
+    const name = $("name").value.trim(), email = $("email").value.trim();
+    if (!name) return $("formErr").textContent = "Name required.";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $("formErr").textContent = "Valid email required.";
+    $("bookBtn").disabled = true; $("bookBtn").textContent = "Booking…";
+    try {
+      const r = await fetch("/api/book", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, startUtc: selected.startUtc, name, email, note: $("note").value.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        $("bookBtn").disabled = false; $("bookBtn").textContent = "Book it";
+        if (r.status === 409) { $("formErr").textContent = j.error; await load(); show("picker"); renderDays(); }
+        else $("formErr").textContent = j.error || "Something went wrong.";
+        return;
+      }
+      $("doneWhen").textContent = `${fmtDay(j.startUtc, guestTz)} · ${fmtTime(j.startUtc, guestTz)}–${fmtTime(j.endUtc, guestTz)} (${guestTz})`;
+      if (j.meetLink) { $("meetP").classList.remove("hidden"); $("meetA").href = j.meetLink; }
+      show("done");
+    } catch {
+      $("bookBtn").disabled = false; $("bookBtn").textContent = "Book it";
+      $("formErr").textContent = "Network error — try again.";
+    }
+  };
+
+  // ---- boot ----
+  async function load() {
+    const r = await fetch(`/api/slots?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw Object.assign(new Error("bad token"), { status: r.status });
+    data = await r.json();
+  }
+  (async () => {
+    if (!token) return gate();
+    try { await load(); openPicker(); }
+    catch (e) { gate(e.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again."); }
+  })();
+})();
+</script>
+</body>
+</html>

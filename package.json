@@ -1,0 +1,13 @@
+{
+  "name": "clawd-calendar",
+  "version": "0.1.0",
+  "description": "Self-hosted scheduling — a simpler, rule-driven Calendly replacement. Zero npm dependencies.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "GCAL_FAKE=1 node server.js",
+    "test": "node --test test/"
+  },
+  "engines": { "node": ">=22.5" },
+  "license": "MIT"
+}

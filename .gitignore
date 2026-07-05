@@ -1,0 +1,9 @@
+# secrets — never commit
+.clawd-calendar.env
+*.env
+
+# runtime data (sqlite db)
+data/
+
+node_modules/
+.DS_Store
