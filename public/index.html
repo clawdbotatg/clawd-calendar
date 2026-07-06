@@ -161,7 +161,11 @@
         e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); renderDays();
       };
     } else {
-      bar.innerHTML = `<span>See which times work for you too:</span><button id="connectBtn">📅 Connect your calendar</button>` +
+      const failed = sessionStorage.getItem("cal_guest_err");
+      sessionStorage.removeItem("cal_guest_err");
+      bar.innerHTML = (failed ? `<span>⚠️ Couldn't read that account's calendar — it may not use Google Calendar. Try another?</span>` :
+        `<span>See which times work for you too:</span>`) +
+        `<button id="connectBtn">📅 Connect your calendar</button>` +
         `<span style="font-size:.8rem">(only free/busy — we never see event details, nothing is stored)</span>`;
       bar.querySelector("#connectBtn").onclick = () => {
         location.href = `/oauth/guest/start?token=${encodeURIComponent(token)}`;
