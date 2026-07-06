@@ -60,7 +60,10 @@ function rateLimit(key, max, windowMs) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function lookupToken(raw) {
-  const t = typeof raw === "string" ? raw.trim() : "";
+  let t = typeof raw === "string" ? raw.trim() : "";
+  // Bare visit with no password → the configured public token ("shields
+  // down" mode). A WRONG password never falls back.
+  if (!t && CONFIG.publicToken) t = CONFIG.publicToken;
   const row = t && t.length <= 128 ? db.getToken(t) : null;
   if (!row) await sleep(300); // flat cost on bad guesses
   return row;
@@ -160,11 +163,15 @@ async function handleBook(req, res) {
 const guestRedirectUri = () => `${CONFIG.baseUrl.replace(/\/$/, "")}/oauth/callback`;
 
 async function handleGuestStart(req, res, url) {
-  const token = await lookupToken(url.searchParams.get("token"));
+  const raw = url.searchParams.get("token");
+  const token = await lookupToken(raw);
   if (!token) return json(res, 404, { error: "unknown link" });
+  // Public (no-password) visitors round-trip a sentinel so the callback
+  // sends them back to "/" instead of exposing the token in the URL.
+  const state = raw ? token.token : "@public";
   const authUrl = gcal.FAKE
-    ? `/oauth/callback?code=fake&state=${encodeURIComponent(token.token)}`
-    : gcal.guestAuthUrl(guestRedirectUri(), token.token);
+    ? `/oauth/callback?code=fake&state=${encodeURIComponent(state)}`
+    : gcal.guestAuthUrl(guestRedirectUri(), state);
   if (!authUrl) return json(res, 501, { error: "calendar overlay not configured" });
   res.writeHead(302, { Location: authUrl });
   res.end();
@@ -173,9 +180,10 @@ async function handleGuestStart(req, res, url) {
 async function handleGuestCallback(req, res, url) {
   const state = url.searchParams.get("state") || "";
   const code = url.searchParams.get("code");
-  const token = await lookupToken(state);
+  const isPublic = state === "@public";
+  const token = await lookupToken(isPublic ? "" : state);
   if (!token) return json(res, 404, { error: "unknown link" });
-  const back = `/a/${encodeURIComponent(token.token)}`;
+  const back = isPublic ? "/" : `/a/${encodeURIComponent(token.token)}`;
   if (!code) { res.writeHead(302, { Location: back }); return res.end(); }
 
   // Degrade gracefully: a guest whose account has no Google Calendar (or a
