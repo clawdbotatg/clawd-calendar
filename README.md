@@ -4,6 +4,9 @@ Self-hosted scheduling — a simpler, rule-driven, open-source Calendly
 replacement. One page, three password tiers, Google Calendar invites.
 **Zero npm dependencies** (Node ≥ 22.5: `node:http`, `node:sqlite`, `fetch`).
 
+<img width="1071" height="727" alt="image" src="https://github.com/user-attachments/assets/ad88bc0e-640d-4ad8-844c-808bb040093f" />
+
+
 Guests follow a link (or type a password), see open slots **in their own
 timezone**, pick one, enter name + email — the event lands on the owner's
 Google Calendar with the guest as attendee, and **Google sends the invite
