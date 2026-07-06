@@ -38,6 +38,17 @@
   }
   .slot:hover { border-color: var(--accent); color: var(--accent); }
   .slot.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .slot.free { border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
+  .slot.conflict { border-color: color-mix(in srgb, #dc2626 55%, var(--line)); background: color-mix(in srgb, #dc2626 8%, var(--card)); opacity: .65; }
+  .slot.conflict:hover { opacity: 1; }
+  .connectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                border: 1px dashed var(--line); border-radius: 10px; padding: 10px 14px; margin: 0 0 6px;
+                font-size: .9rem; color: var(--muted); }
+  .connectbar button { width: auto; padding: 7px 14px; font-size: .9rem; }
+  .legend { display: inline-flex; gap: 14px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
+  .warnbadge { background: color-mix(in srgb, #dc2626 12%, var(--card)); border: 1px solid #dc2626;
+               border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; font-size: .9rem; }
   .tzbar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
   .tzbar select { margin: 0; flex: 1; }
   .tzbar span { color: var(--muted); font-size: .85rem; white-space: nowrap; }
@@ -74,6 +85,7 @@
       <span>Times shown in</span>
       <select id="tzSel"></select>
     </div>
+    <div id="connectBar" class="connectbar hidden"></div>
     <div id="days"></div>
     <div id="empty" class="spin hidden">No open times right now — check back soon.</div>
   </div>
@@ -82,6 +94,7 @@
   <div id="form" class="hidden">
     <h1>Confirm your time</h1>
     <p class="sub" id="chosen"></p>
+    <div id="conflictWarn" class="warnbadge hidden">⚠️ Heads up — your calendar looks busy at this time.</div>
     <div class="card">
       <label>Your name</label>
       <input id="name" autocomplete="name" placeholder="Ada Lovelace">
@@ -118,6 +131,43 @@
   const token = m ? decodeURIComponent(m[1]) : null;
   let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let data = null, selected = null;
+
+  // ---- guest calendar overlay ----
+  const GUEST_TTL = 30 * 60_000; // busy data goes stale after 30 min
+  function guestCal() {
+    try {
+      const g = JSON.parse(sessionStorage.getItem("cal_guest"));
+      if (g && g.busy && Date.now() - g.at < GUEST_TTL) return g;
+    } catch {}
+    return null;
+  }
+  function guestConflict(slot) {
+    const g = guestCal();
+    if (!g) return false;
+    const s = Date.parse(slot.startUtc), e = Date.parse(slot.endUtc);
+    return g.busy.some((b) => Date.parse(b.start) < e && Date.parse(b.end) > s);
+  }
+  function renderConnectBar() {
+    const bar = $("connectBar");
+    if (!data.overlay) return bar.classList.add("hidden");
+    bar.classList.remove("hidden");
+    const g = guestCal();
+    if (g) {
+      bar.innerHTML = `<span class="legend"><span><i style="background:var(--ok)"></i>works for both</span>` +
+        `<span><i style="background:#dc2626"></i>you're busy</span></span>` +
+        `<span>· ${g.email ? g.email.replace(/[<>&]/g, "") : "calendar connected"}</span>` +
+        `<a href="#" id="disconnect">disconnect</a>`;
+      bar.querySelector("#disconnect").onclick = (e) => {
+        e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); renderDays();
+      };
+    } else {
+      bar.innerHTML = `<span>See which times work for you too:</span><button id="connectBtn">📅 Connect your calendar</button>` +
+        `<span style="font-size:.8rem">(only free/busy — we never see event details, nothing is stored)</span>`;
+      bar.querySelector("#connectBtn").onclick = () => {
+        location.href = `/oauth/guest/start?token=${encodeURIComponent(token)}`;
+      };
+    }
+  }
 
   // ---- password gate ----
   function gate(msg) {
@@ -157,8 +207,10 @@
     for (const [day, slots] of byDay) {
       const h = document.createElement("div"); h.className = "day"; h.textContent = day;
       const grid = document.createElement("div"); grid.className = "slots";
+      const connected = !!guestCal();
       for (const s of slots) {
         const b = document.createElement("div"); b.className = "slot";
+        if (connected) b.classList.add(guestConflict(s) ? "conflict" : "free");
         b.textContent = fmtTime(s.startUtc, guestTz);
         b.onclick = () => { selected = s; openForm(); };
         grid.appendChild(b);
@@ -176,6 +228,7 @@
       $("goldBanner").textContent = `Golden ticket: pick any time that works for you — ${data.ownerName} will move things around to be there.`;
     }
     tzOptions();
+    renderConnectBar();
     renderDays();
   }
 
@@ -183,6 +236,9 @@
   function openForm() {
     show("form");
     $("chosen").textContent = `${fmtDay(selected.startUtc, guestTz)} · ${fmtTime(selected.startUtc, guestTz)}–${fmtTime(selected.endUtc, guestTz)} (${guestTz})`;
+    $("conflictWarn").classList.toggle("hidden", !guestConflict(selected));
+    const g = guestCal();
+    if (g && g.email && !$("email").value) $("email").value = g.email;
     $("formErr").textContent = "";
     $("name").focus();
   }

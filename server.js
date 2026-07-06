@@ -93,6 +93,7 @@ async function handleSlots(req, res, url) {
     durationMin: rules.durationMin,
     pickAnything: !!rules.ignoreBusy,
     maxDaysOut: CONFIG.maxDaysOut,
+    overlay: gcal.FAKE || !!gcal.webCreds(), // guest calendar-connect available?
     slots,
   });
 }
@@ -147,6 +148,46 @@ async function handleBook(req, res) {
   json(res, result.code, result.body);
 }
 
+// ── guest calendar overlay (Phase 2) ─────────────────────────────────────
+// Guest OAuth: freebusy scope only, token used once server-side, never
+// stored. Busy blocks travel to the guest's own sessionStorage via the
+// callback page — the server keeps nothing.
+
+const guestRedirectUri = () => `${CONFIG.baseUrl.replace(/\/$/, "")}/oauth/callback`;
+
+async function handleGuestStart(req, res, url) {
+  const token = await lookupToken(url.searchParams.get("token"));
+  if (!token) return json(res, 404, { error: "unknown link" });
+  const authUrl = gcal.FAKE
+    ? `/oauth/callback?code=fake&state=${encodeURIComponent(token.token)}`
+    : gcal.guestAuthUrl(guestRedirectUri(), token.token);
+  if (!authUrl) return json(res, 501, { error: "calendar overlay not configured" });
+  res.writeHead(302, { Location: authUrl });
+  res.end();
+}
+
+async function handleGuestCallback(req, res, url) {
+  const state = url.searchParams.get("state") || "";
+  const code = url.searchParams.get("code");
+  const token = await lookupToken(state);
+  if (!token) return json(res, 404, { error: "unknown link" });
+  const back = `/a/${encodeURIComponent(token.token)}`;
+  if (!code) { res.writeHead(302, { Location: back }); return res.end(); }
+
+  const { email, accessToken } = await gcal.guestExchange(code, guestRedirectUri());
+  const horizonMs = (CONFIG.maxDaysOut + 2) * 86_400_000;
+  const busy = await gcal.guestFreeBusy(accessToken,
+    new Date().toISOString(), new Date(Date.now() + horizonMs).toISOString());
+
+  // Hand the result to the guest's browser and bounce back to the picker.
+  const payload = JSON.stringify({ email, busy, at: Date.now() }).replace(/</g, "\\u003c");
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><script>
+sessionStorage.setItem("cal_guest", ${JSON.stringify(payload)});
+location.replace(${JSON.stringify(back)});
+</script>`);
+}
+
 function serveStatic(res, file) {
   const p = path.join(PUBLIC_DIR, file);
   if (!p.startsWith(PUBLIC_DIR) || !fs.existsSync(p)) { res.writeHead(404); return res.end("not found"); }
@@ -164,6 +205,8 @@ const server = http.createServer(async (req, res) => {
       return await handleSlots(req, res, url);
     }
     if (url.pathname === "/api/book" && req.method === "POST") return await handleBook(req, res);
+    if (url.pathname === "/oauth/guest/start") return await handleGuestStart(req, res, url);
+    if (url.pathname === "/oauth/callback") return await handleGuestCallback(req, res, url);
     // The single page serves both the password gate (/) and the picker (/a/<pw>).
     if (url.pathname === "/" || /^\/a\/[^/]+$/.test(url.pathname)) return serveStatic(res, "index.html");
     return serveStatic(res, url.pathname.slice(1));
