@@ -18,8 +18,23 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const { execFile } = require("node:child_process");
 
-const ENV_FILE = path.join(__dirname, "..", ".clawd-calendar.env");
+const { ENV_FILE } = require("../lib/env");
 const SKILL_CREDS = path.join(os.homedir(), ".config", "gcal-skill", "credentials.json");
+const EXAMPLE_FILE = path.join(__dirname, "..", ".env.example");
+
+// Upsert KEY=VALUE lines, preserving everything else in the env file.
+// First run: seed from .env.example so forkers get the documented knobs.
+function saveEnv(updates) {
+  let text = "";
+  if (fs.existsSync(ENV_FILE)) text = fs.readFileSync(ENV_FILE, "utf8");
+  else if (fs.existsSync(EXAMPLE_FILE)) text = fs.readFileSync(EXAMPLE_FILE, "utf8");
+  for (const [k, v] of Object.entries(updates)) {
+    const line = `${k}=${v}`;
+    const re = new RegExp(`^#?\\s*${k}=.*$`, "m");
+    text = re.test(text) ? text.replace(re, line) : text + (text.endsWith("\n") || !text ? "" : "\n") + line + "\n";
+  }
+  fs.writeFileSync(ENV_FILE, text, { mode: 0o600 });
+}
 const REDIRECT_PORT = 8765;
 const SCOPE = "https://www.googleapis.com/auth/calendar"; // events + freebusy (+ shared with gcal skill)
 
@@ -78,10 +93,12 @@ async function main() {
     process.exit(1);
   }
 
-  fs.writeFileSync(ENV_FILE,
-    `GCAL_CLIENT_ID=${clientId}\nGCAL_CLIENT_SECRET=${clientSecret}\nGCAL_REFRESH_TOKEN=${tok.refresh_token}\n`,
-    { mode: 0o600 });
-  console.log(`\n✅ Saved ${ENV_FILE}`);
+  saveEnv({
+    GCAL_CLIENT_ID: clientId,
+    GCAL_CLIENT_SECRET: clientSecret,
+    GCAL_REFRESH_TOKEN: tok.refresh_token,
+  });
+  console.log(`\n✅ Saved ${ENV_FILE} (personalization knobs are in there too — edit away)`);
 
   const mirror = (await rl.question(`Also save to ${SKILL_CREDS} for the gcal CLI skill? [Y/n] `)).trim().toLowerCase();
   if (mirror !== "n") {

@@ -19,7 +19,7 @@ function flag(name) { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[
 function has(name) { return argv.includes(`--${name}`); }
 
 if (has("list")) {
-  const config = require("../config.json");
+  const config = require("../lib/config");
   for (const t of db.listTokens()) {
     const uses = t.maxUses != null ? `${t.uses}/${t.maxUses}` : `${t.uses}`;
     console.log(`${t.disabled ? "✗" : "✓"} [${t.tier.padEnd(8)}] ${t.label.padEnd(20)} uses:${uses.padEnd(6)} ${config.baseUrl}/a/${encodeURIComponent(t.token)}`);
@@ -51,7 +51,7 @@ db.createToken({
   windowOverride,
 });
 
-const config = require("../config.json");
+const config = require("../lib/config");
 console.log(`minted [${tier}] "${label}"`);
 console.log(`  password: ${token}`);
 console.log(`  link:     ${config.baseUrl}/a/${encodeURIComponent(token)}`);

@@ -11,10 +11,10 @@ const db = require("./lib/db");
 const gcal = require("./lib/gcal");
 const { dayKey } = require("./lib/tz");
 
-const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+const CONFIG = require("./lib/config");
 // CAL_PORT, not PORT — a bare PORT is often inherited from the parent
 // process's environment (e.g. the harness exports PORT=8787).
-const PORT = +(process.env.CAL_PORT || CONFIG.port || 8788);
+const PORT = CONFIG.port;
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 db.open();
