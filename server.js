@@ -94,6 +94,7 @@ async function handleSlots(req, res, url) {
     tier: token.tier,
     label: token.label,
     durationMin: rules.durationMin,
+    stepMinutes: CONFIG.slotStepMinutes || rules.durationMin,
     pickAnything: !!rules.ignoreBusy,
     maxDaysOut: CONFIG.maxDaysOut,
     overlay: gcal.FAKE || !!gcal.webCreds(), // guest calendar-connect available?

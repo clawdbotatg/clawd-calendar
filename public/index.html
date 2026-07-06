@@ -401,9 +401,7 @@
         tl.appendChild(el);
       }
     }
-    const step = day.slots.length > 1
-      ? Math.min(...day.slots.slice(1).map((s, i) => localMin(s.startUtc) - localMin(day.slots[i].startUtc)).filter((d) => d > 0))
-      : 60;
+    const step = data.stepMinutes || 30;
     for (const s of day.slots) {
       const chip = document.createElement("div"); chip.className = "tlSlot";
       if (g && guestConflict(s)) chip.classList.add("conflict");
