@@ -92,6 +92,7 @@ async function handleSlots(req, res, url) {
     ownerName: CONFIG.ownerName,
     ownerTz: CONFIG.ownerTz,
     pageTitle: CONFIG.pageTitle,
+    pageSubtitle: CONFIG.pageSubtitle,
     pageDescription: CONFIG.pageDescription,
     avatarUrl: CONFIG.avatarUrl,
     tier: token.tier,

@@ -44,7 +44,7 @@
   .pane { padding: 24px; min-width: 0; }
   .info { border-right: 1px solid var(--line); }
   .info img.avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; }
-  .info .host { color: var(--muted); font-size: .9rem; font-weight: 600; }
+  .info .host { color: var(--muted); font-size: .9rem; font-weight: 600; margin: -8px 0 14px; }
   .info h1 { margin: 2px 0 12px; font-size: 1.35rem; }
   .info .meta { color: var(--muted); font-size: .9rem; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
   .info .desc { color: var(--muted); font-size: .92rem; margin-top: 14px; white-space: pre-wrap; }
@@ -143,8 +143,8 @@
     <div class="layout">
       <aside class="pane info">
         <img id="avatar" class="avatar hidden" alt="">
-        <div class="host" id="hostName"></div>
         <h1 id="title"></h1>
+        <div class="host" id="subtitle"></div>
         <div class="meta">🕐 <span id="durLabel"></span></div>
         <div class="meta">📹 Google Meet — link arrives with the invite</div>
         <div class="desc" id="desc"></div>
@@ -452,8 +452,11 @@
 
   function openPicker() {
     show("picker");
-    $("hostName").textContent = data.ownerName;
-    $("title").textContent = data.pageTitle || `Book a call with ${data.ownerName}`;
+    const title = data.pageTitle || `Book a call with ${data.ownerName}`;
+    document.title = title;
+    $("title").textContent = title;
+    $("subtitle").textContent = data.pageSubtitle || "";
+    $("subtitle").classList.toggle("hidden", !data.pageSubtitle);
     $("durLabel").textContent = `${data.durationMin} min`;
     $("desc").textContent = data.pageDescription || "";
     if (data.avatarUrl) { $("avatar").src = data.avatarUrl; $("avatar").classList.remove("hidden"); }
