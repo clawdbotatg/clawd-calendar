@@ -185,8 +185,6 @@
       <input id="name" autocomplete="name" placeholder="Ada Lovelace">
       <label>Email</label>
       <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
-      <label>Anything to prepare? <span style="color:var(--muted)">(optional)</span></label>
-      <textarea id="note" rows="3" placeholder="What would you like to talk about?"></textarea>
       <div id="formErr" class="err"></div>
       <button id="bookBtn">Book it</button>
       <button class="back" id="backBtn">← pick a different time</button>
@@ -491,7 +489,7 @@
     try {
       const r = await fetch("/api/book", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, startUtc: selected.startUtc, name, email, note: $("note").value.trim() }),
+        body: JSON.stringify({ token, startUtc: selected.startUtc, name, email }),
       });
       const j = await r.json();
       if (!r.ok) {
