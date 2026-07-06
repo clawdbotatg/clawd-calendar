@@ -211,6 +211,20 @@ location.replace(${JSON.stringify(back)});
 </script>`);
 }
 
+// index.html is served with OG/title placeholders filled from config, so
+// unfurl cards and the tab title follow the env without a build step.
+function serveIndex(res) {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const title = CONFIG.pageTitle || `Book a call with ${CONFIG.ownerName}`;
+  const desc = CONFIG.pageDescription || `${CONFIG.slotMinutes}-minute call — pick a time that works for you.`;
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
+    .replaceAll("__OG_TITLE__", esc(title))
+    .replaceAll("__OG_DESC__", esc(desc))
+    .replaceAll("__BASE_URL__", CONFIG.baseUrl.replace(/\/$/, ""));
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(html);
+}
+
 function serveStatic(res, file) {
   const p = path.join(PUBLIC_DIR, file);
   if (!p.startsWith(PUBLIC_DIR) || !fs.existsSync(p)) { res.writeHead(404); return res.end("not found"); }
@@ -231,7 +245,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/oauth/guest/start") return await handleGuestStart(req, res, url);
     if (url.pathname === "/oauth/callback") return await handleGuestCallback(req, res, url);
     // The single page serves both the password gate (/) and the picker (/a/<pw>).
-    if (url.pathname === "/" || /^\/a\/[^/]+$/.test(url.pathname)) return serveStatic(res, "index.html");
+    if (url.pathname === "/" || /^\/a\/[^/]+$/.test(url.pathname)) return serveIndex(res);
     return serveStatic(res, url.pathname.slice(1));
   } catch (err) {
     console.error(`[err] ${req.method} ${url.pathname}:`, err.message);
