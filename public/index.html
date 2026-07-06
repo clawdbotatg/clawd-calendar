@@ -8,11 +8,11 @@
 <style>
   :root {
     --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b;
-    --line: #e4e4e0; --accent: #2563eb; --accent-ink: #ffffff; --ok: #16a34a;
+    --line: #e4e4e0; --accent: #4d94f5; --accent-ink: #ffffff; --ok: #16a34a;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #101012; --card: #1a1a1e; --ink: #ececec; --muted: #9a9aa2;
-            --line: #2a2a30; --accent: #3b82f6; --ok: #22c55e; }
+            --line: #2a2a30; --accent: #66a3f7; --ok: #22c55e; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -21,13 +21,13 @@
   .wrap.wide { max-width: 1080px; }
   h1 { font-size: 1.5rem; margin: 8px 0 4px; }
   .sub { color: var(--muted); margin: 0 0 20px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 0; padding: 20px; }
   input, select, textarea {
-    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 0;
     background: var(--bg); color: var(--ink); font: inherit; margin: 6px 0 14px;
   }
   button {
-    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 0;
     padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; width: 100%;
   }
   button:disabled { opacity: .5; cursor: default; }
@@ -40,10 +40,10 @@
 
   /* ── picker layout: info | calendar | times ── */
   .layout { display: grid; grid-template-columns: 260px 1fr 300px; gap: 0;
-            background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+            background: var(--card); border: 1px solid var(--line); border-radius: 0; overflow: hidden; }
   .pane { padding: 24px; min-width: 0; }
   .info { border-right: 1px solid var(--line); }
-  .info img.avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; }
+  .info img.avatar { width: 64px; height: 64px; border-radius: 0; object-fit: cover; margin-bottom: 10px; }
   .info .host { color: var(--muted); font-size: .9rem; font-weight: 600; margin: -8px 0 14px; }
   .info h1 { margin: 2px 0 12px; font-size: 1.35rem; }
   .info .meta { color: var(--muted); font-size: .9rem; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
@@ -60,13 +60,13 @@
   /* month calendar */
   .calhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .calhead .mon { font-weight: 700; }
-  .calhead button { width: 36px; height: 36px; padding: 0; border-radius: 50%;
+  .calhead button { width: 36px; height: 36px; padding: 0; border-radius: 0;
                     background: none; color: var(--accent); font-size: 1.2rem; }
   .calhead button:disabled { color: var(--line); }
   .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
   .calgrid .dow { font-size: .72rem; color: var(--muted); padding: 4px 0; text-transform: uppercase; }
   .calgrid .cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
-                   border-radius: 50%; font-size: .92rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+                   border-radius: 0; font-size: .92rem; font-variant-numeric: tabular-nums; color: var(--muted); }
   .calgrid .cell.open { background: color-mix(in srgb, var(--accent) 12%, transparent);
                         color: var(--accent); font-weight: 700; cursor: pointer; }
   .calgrid .cell.open:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
@@ -78,7 +78,7 @@
   /* times column */
   .timeshead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; gap: 8px; }
   .timeshead .dl { font-weight: 700; font-size: .95rem; }
-  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 0; overflow: hidden; }
   .viewtoggle button { width: auto; border-radius: 0; background: var(--card); color: var(--muted);
                        font-size: .75rem; padding: 5px 10px; font-weight: 500; }
   .viewtoggle button.on { background: var(--accent); color: var(--accent-ink); }
@@ -86,7 +86,7 @@
   @media (max-width: 900px) { .timescroll { max-height: none; } }
   .tslot { display: flex; align-items: center; justify-content: center; width: 100%;
            border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
-           color: var(--accent); font-weight: 700; border-radius: 8px; padding: 12px 4px;
+           color: var(--accent); font-weight: 700; border-radius: 0; padding: 12px 4px;
            margin-bottom: 8px; cursor: pointer; font-variant-numeric: tabular-nums; background: var(--card); }
   .tslot:hover { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
   .tslot.free { border-color: color-mix(in srgb, var(--ok) 60%, var(--line)); color: var(--ok); }
@@ -96,24 +96,24 @@
 
   /* connect bar */
   .connectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px;
-                border: 1px dashed var(--line); border-radius: 10px; padding: 10px 14px;
+                border: 1px dashed var(--line); border-radius: 0; padding: 10px 14px;
                 font-size: .85rem; color: var(--muted); }
   .connectbar button { width: auto; padding: 7px 14px; font-size: .85rem; }
   .legend { display: inline-flex; gap: 12px; }
-  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 0; margin-right: 5px; }
   .banner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); border: 1px solid var(--accent);
-            border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: .95rem; }
+            border-radius: 0; padding: 12px 14px; margin-bottom: 16px; font-size: .95rem; }
   .warnbadge { background: color-mix(in srgb, #dc2626 12%, var(--card)); border: 1px solid #dc2626;
-               border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; font-size: .9rem; }
+               border-radius: 0; padding: 8px 12px; margin: 0 0 12px; font-size: .9rem; }
 
   /* day timeline (connected view) */
-  .tl { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
+  .tl { position: relative; border: 1px solid var(--line); border-radius: 0; background: var(--bg); overflow: hidden; }
   .tlHour { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); opacity: .55; }
   .tlHour span { position: absolute; top: -1px; left: 5px; font-size: .64rem; color: var(--muted); background: var(--bg); padding-right: 4px; }
   .tlBusy { position: absolute; left: 55%; right: 5px; background: color-mix(in srgb, var(--muted) 22%, var(--bg));
-            border: 1px solid color-mix(in srgb, var(--muted) 40%, var(--line)); border-radius: 6px;
+            border: 1px solid color-mix(in srgb, var(--muted) 40%, var(--line)); border-radius: 0;
             font-size: .68rem; color: var(--muted); padding: 1px 7px; overflow: hidden; }
-  .tlSlot { position: absolute; left: 42px; width: calc(55% - 48px); border-radius: 6px; cursor: pointer;
+  .tlSlot { position: absolute; left: 42px; width: calc(55% - 48px); border-radius: 0; cursor: pointer;
             font-size: .75rem; display: flex; align-items: center; padding: 0 9px; font-variant-numeric: tabular-nums;
             background: color-mix(in srgb, var(--ok) 10%, var(--bg));
             border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--line)); color: var(--ink); }
