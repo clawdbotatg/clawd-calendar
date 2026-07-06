@@ -44,6 +44,25 @@
   .connectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
                 border: 1px dashed var(--line); border-radius: 10px; padding: 10px 14px; margin: 0 0 6px;
                 font-size: .9rem; color: var(--muted); }
+  /* day-timeline view */
+  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-left: auto; }
+  .viewtoggle button { width: auto; border-radius: 0; background: var(--card); color: var(--muted);
+                       font-size: .8rem; padding: 6px 12px; font-weight: 500; }
+  .viewtoggle button.on { background: var(--accent); color: var(--accent-ink); }
+  .tl { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
+  .tlHour { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); opacity: .55; }
+  .tlHour span { position: absolute; top: -1px; left: 6px; font-size: .68rem; color: var(--muted); background: var(--card); padding-right: 4px; }
+  .tlBusy { position: absolute; left: 53%; right: 6px; background: color-mix(in srgb, var(--muted) 22%, var(--card));
+            border: 1px solid color-mix(in srgb, var(--muted) 40%, var(--line)); border-radius: 6px;
+            font-size: .7rem; color: var(--muted); padding: 2px 8px; overflow: hidden; }
+  .tlSlot { position: absolute; left: 52px; width: calc(53% - 60px); border-radius: 6px; cursor: pointer;
+            font-size: .78rem; display: flex; align-items: center; padding: 0 10px; font-variant-numeric: tabular-nums;
+            background: color-mix(in srgb, var(--ok) 10%, var(--card));
+            border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--line)); color: var(--ink); }
+  .tlSlot:hover { border-color: var(--accent); color: var(--accent); z-index: 3; }
+  .tlSlot.conflict { background: color-mix(in srgb, #dc2626 9%, var(--card));
+                     border-color: color-mix(in srgb, #dc2626 50%, var(--line)); opacity: .75; }
+  .tlDayLabel { font-size: .7rem; color: var(--muted); position: absolute; right: 8px; top: 4px; }
   .connectbar button { width: auto; padding: 7px 14px; font-size: .9rem; }
   .legend { display: inline-flex; gap: 14px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
@@ -84,6 +103,7 @@
     <div class="tzbar">
       <span>Times shown in</span>
       <select id="tzSel"></select>
+      <span class="viewtoggle"><button id="vList">list</button><button id="vDay">day</button></span>
     </div>
     <div id="connectBar" class="connectbar hidden"></div>
     <div id="days"></div>
@@ -158,7 +178,7 @@
         `<span>· ${g.email ? g.email.replace(/[<>&]/g, "") : "calendar connected"}</span>` +
         `<a href="#" id="disconnect">disconnect</a>`;
       bar.querySelector("#disconnect").onclick = (e) => {
-        e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); renderDays();
+        e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); setViewMode("list");
       };
     } else {
       const failed = sessionStorage.getItem("cal_guest_err");
@@ -199,28 +219,106 @@
     sel.onchange = () => { guestTz = sel.value; renderDays(); };
   }
 
+  // minutes since local midnight (in guestTz) for an instant — the
+  // coordinate space of the timeline, DST-safe because Intl does the math
+  function localMin(iso) {
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: guestTz, hour: "2-digit", minute: "2-digit", hour12: false })
+      .formatToParts(new Date(iso));
+    return (+p.find((x) => x.type === "hour").value % 24) * 60 + +p.find((x) => x.type === "minute").value;
+  }
+  const dayKeyOf = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: guestTz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+
+  let viewMode = null; // "list" | "day" — default set in openPicker
+  function setViewMode(m) {
+    viewMode = m;
+    $("vList").classList.toggle("on", m === "list");
+    $("vDay").classList.toggle("on", m === "day");
+    renderDays();
+  }
+
   function renderDays() {
     const byDay = new Map();
     for (const s of data.slots) {
-      const k = fmtDay(s.startUtc, guestTz);
-      if (!byDay.has(k)) byDay.set(k, []);
-      byDay.get(k).push(s);
+      const k = dayKeyOf(s.startUtc);
+      if (!byDay.has(k)) byDay.set(k, { label: fmtDay(s.startUtc, guestTz), slots: [] });
+      byDay.get(k).slots.push(s);
     }
     $("days").innerHTML = "";
     $("empty").classList.toggle("hidden", data.slots.length > 0);
-    for (const [day, slots] of byDay) {
-      const h = document.createElement("div"); h.className = "day"; h.textContent = day;
-      const grid = document.createElement("div"); grid.className = "slots";
-      const connected = !!guestCal();
-      for (const s of slots) {
-        const b = document.createElement("div"); b.className = "slot";
-        if (connected) b.classList.add(guestConflict(s) ? "conflict" : "free");
-        b.textContent = fmtTime(s.startUtc, guestTz);
-        b.onclick = () => { selected = s; openForm(); };
-        grid.appendChild(b);
-      }
-      $("days").append(h, grid);
+    for (const [key, day] of byDay) {
+      const h = document.createElement("div"); h.className = "day"; h.textContent = day.label;
+      $("days").append(h, viewMode === "day" ? buildTimeline(key, day) : buildChips(day));
     }
+  }
+
+  function buildChips(day) {
+    const grid = document.createElement("div"); grid.className = "slots";
+    const connected = !!guestCal();
+    for (const s of day.slots) {
+      const b = document.createElement("div"); b.className = "slot";
+      if (connected) b.classList.add(guestConflict(s) ? "conflict" : "free");
+      b.textContent = fmtTime(s.startUtc, guestTz);
+      b.onclick = () => { selected = s; openForm(); };
+      grid.appendChild(b);
+    }
+    return grid;
+  }
+
+  // Day view: the guest's whole day as a timeline — their busy blocks on the
+  // right, bookable start-times overlaid on the left, red where they collide.
+  function buildTimeline(key, day) {
+    const PX = 1.05; // px per minute
+    const g = guestCal();
+    // Guest busy clipped to this local day, in local-minute space.
+    const busy = (g ? g.busy : []).map((b) => {
+      const sDay = dayKeyOf(b.start), eDay = dayKeyOf(b.end);
+      if (sDay !== key && eDay !== key) return null;
+      return { s: sDay === key ? localMin(b.start) : 0, e: eDay === key ? localMin(b.end) : 1440 };
+    }).filter((b) => b && b.e > b.s);
+
+    const starts = day.slots.map((s) => localMin(s.startUtc));
+    const ends = day.slots.map((s) => localMin(s.endUtc) || 1440);
+    let lo = Math.min(...starts, ...(busy.length ? busy.map((b) => b.s) : [Infinity]), 8 * 60);
+    let hi = Math.max(...ends, ...(busy.length ? busy.map((b) => b.e) : [0]), 18 * 60);
+    lo = Math.max(0, Math.floor(lo / 60) * 60 - 30);
+    hi = Math.min(1440, Math.ceil(hi / 60) * 60 + 30);
+
+    const tl = document.createElement("div"); tl.className = "tl";
+    tl.style.height = `${(hi - lo) * PX}px`;
+    for (let m = Math.ceil(lo / 60) * 60; m <= hi; m += 60) {
+      const line = document.createElement("div"); line.className = "tlHour";
+      line.style.top = `${(m - lo) * PX}px`;
+      const hh = m / 60 % 24;
+      line.innerHTML = `<span>${((hh + 11) % 12) + 1}${hh < 12 ? "am" : "pm"}</span>`;
+      tl.appendChild(line);
+    }
+    if (g) {
+      const lbl = document.createElement("div"); lbl.className = "tlDayLabel"; lbl.textContent = "your calendar";
+      tl.appendChild(lbl);
+      for (const b of busy) {
+        const el = document.createElement("div"); el.className = "tlBusy";
+        el.style.top = `${(Math.max(b.s, lo) - lo) * PX}px`;
+        el.style.height = `${(Math.min(b.e, hi) - Math.max(b.s, lo)) * PX - 2}px`;
+        el.textContent = "busy";
+        tl.appendChild(el);
+      }
+    }
+    // Bookable start chips: one per slot start, sized to the start-step so
+    // overlapping 60-min candidates don't stack; click books the full slot.
+    const step = day.slots.length > 1
+      ? Math.min(...day.slots.slice(1).map((s, i) => localMin(s.startUtc) - localMin(day.slots[i].startUtc)).filter((d) => d > 0))
+      : 60;
+    for (const s of day.slots) {
+      const chip = document.createElement("div"); chip.className = "tlSlot";
+      if (g && guestConflict(s)) chip.classList.add("conflict");
+      chip.style.top = `${(localMin(s.startUtc) - lo) * PX + 1}px`;
+      chip.style.height = `${step * PX - 4}px`;
+      chip.textContent = fmtTime(s.startUtc, guestTz);
+      chip.title = `${fmtTime(s.startUtc, guestTz)} – ${fmtTime(s.endUtc, guestTz)}`;
+      chip.onclick = () => { selected = s; openForm(); };
+      tl.appendChild(chip);
+    }
+    return tl;
   }
 
   function openPicker() {
@@ -233,7 +331,11 @@
     }
     tzOptions();
     renderConnectBar();
-    renderDays();
+    $("vList").onclick = () => setViewMode("list");
+    $("vDay").onclick = () => setViewMode("day");
+    // Connected guests default to the day view — that's the whole point of
+    // connecting; everyone else starts on the compact list.
+    setViewMode(guestCal() ? "day" : "list");
   }
 
   // ---- form ----
