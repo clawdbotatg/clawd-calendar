@@ -5,5 +5,9 @@
 # runtime data (sqlite db)
 data/
 
+# personal static assets (avatar, favicons, og card) — served as an overlay
+# on top of public/, never committed
+assets/
+
 node_modules/
 .DS_Store

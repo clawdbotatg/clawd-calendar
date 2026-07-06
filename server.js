@@ -225,10 +225,17 @@ function serveIndex(res) {
   res.end(html);
 }
 
+// Static files resolve from the gitignored assets/ overlay first (personal
+// images: avatar, favicons, og card — never committed), then public/.
+const ASSETS_DIR = path.join(__dirname, "assets");
 function serveStatic(res, file) {
-  const p = path.join(PUBLIC_DIR, file);
-  if (!p.startsWith(PUBLIC_DIR) || !fs.existsSync(p)) { res.writeHead(404); return res.end("not found"); }
-  const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png" };
+  let p = null;
+  for (const dir of [ASSETS_DIR, PUBLIC_DIR]) {
+    const cand = path.join(dir, file);
+    if (cand.startsWith(dir) && fs.existsSync(cand) && fs.statSync(cand).isFile()) { p = cand; break; }
+  }
+  if (!p) { res.writeHead(404); return res.end("not found"); }
+  const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg" };
   res.writeHead(200, { "Content-Type": types[path.extname(p)] || "application/octet-stream", "Cache-Control": "no-store" });
   fs.createReadStream(p).pipe(res);
 }
