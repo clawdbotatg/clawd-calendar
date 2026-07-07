@@ -79,6 +79,11 @@ Beyond the default call, each **event type** is its own route
 weekly window, per-type daily cap (office hours filling up doesn't consume
 the one-call-per-day budget), min notice, calendar event title, page
 title/description, and an accent color that re-themes the whole page.
+A type can also customize the **calendar invite itself**: custom
+description text (`--event-desc`), a location (`--location`), Meet link
+on/off (`--meet`/`--no-meet`), and a **prep block** (`--prep 15` — an
+owner-only "Prepare: …" event created on the calendar right before each
+booking; the slot search keeps that gap clear of busy events).
 Anything unset inherits the env config. Resolution chain:
 env config → event type → token (tiers still work inside any type).
 

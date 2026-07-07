@@ -131,6 +131,42 @@ test("applyType overlays type rules onto config; unset fields inherit", () => {
   assert.equal(applyType(CONFIG, null), CONFIG, "no type = untouched config");
 });
 
+test("applyType: custom-invite fields (description, location, prep, meet)", () => {
+  const type = {
+    key: "slop", label: "SLOP.COMPUTER", durationMin: 60, dailyCap: 1,
+    eventDescription: "an onchain podcast", eventLocation: "https://slop.computer/",
+    prepMinutes: 15, addMeet: 0,
+  };
+  const cfg = applyType({ ...CONFIG, ownerName: "x", addMeetLink: true }, type);
+  assert.equal(cfg.eventDescription, "an onchain podcast");
+  assert.equal(cfg.eventLocation, "https://slop.computer/");
+  assert.equal(cfg.prepMinutes, 15);
+  assert.equal(cfg.addMeetLink, false, "addMeet=0 forces Meet off");
+
+  // prep block wider than the config buffer widens the busy check
+  const wide = applyType({ ...CONFIG, bufferBeforeMinutes: 15, addMeetLink: true },
+    { ...type, prepMinutes: 30, addMeet: null });
+  assert.equal(wide.bufferBeforeMinutes, 30, "buffer grows to cover the prep block");
+  assert.equal(wide.addMeetLink, true, "addMeet null inherits config");
+
+  const plain = applyType({ ...CONFIG, addMeetLink: true }, { key: "q", label: "Q" });
+  assert.equal(plain.eventDescription, null);
+  assert.equal(plain.prepMinutes, 0);
+  assert.equal(plain.bufferBeforeMinutes, CONFIG.bufferBeforeMinutes);
+});
+
+test("prep block keeps a slot clear of busy events right before it", () => {
+  // Busy Tue 9–10. With a 30-min prep block, the 10:00 and 10:15… slots need
+  // 30 clear minutes before — 10:00 (prep 9:30–10:00 vs busy till 10:00) dies,
+  // 10:30 (prep 10:00–10:30) is fine.
+  const cfg = applyType({ ...CONFIG, ownerName: "x" },
+    { key: "slop", label: "S", prepMinutes: 30 });
+  const busy = [{ start: mtnIso(7, 9), end: mtnIso(7, 10) }];
+  const starts = startsOn(getOpenSlots({ config: cfg, token: null, busy, bookedByDay: {}, now: NOW }), 7);
+  assert.ok(!starts.includes(mtnIso(7, 10, 0)), "10:00 blocked — prep would overlap the 9–10 event");
+  assert.ok(starts.includes(mtnIso(7, 10, 30)), "10:30 ok — prep 10:00–10:30 is clear");
+});
+
 test("typed config drives slots: 30-min office hours only on Friday 2–4pm", () => {
   const type = { label: "Office Hours", durationMin: 30, stepMinutes: 30,
     window: { days: ["fri"], start: "14:00", end: "16:00" }, dailyCap: 4 };

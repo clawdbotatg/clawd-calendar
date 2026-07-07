@@ -113,8 +113,12 @@
         <span><label>Max days out<input id="t_maxdays" type="number" min="1"></label></span>
         <span><label>Accent color<input id="t_accent" placeholder="#f5a623" class="mono"></label></span>
         <span><label>Calendar event title<input id="t_event" placeholder="Office hours: {name}"></label></span>
+        <span><label>Prep block, min (owner event before)<input id="t_prep" type="number" min="0" placeholder="15"></label></span>
+        <span><label>Event location (URL or place)<input id="t_loc" placeholder="https://…"></label></span>
+        <span><label>Meet link<select id="t_meet"><option value="">default</option><option value="1">on</option><option value="0">off</option></select></label></span>
       </div>
       <label>Page description<textarea id="t_desc" placeholder="Drop-in — 30 minutes, Fridays."></textarea></label>
+      <label>Invite description (custom text in the calendar invite)<textarea id="t_invitedesc" placeholder="Agenda, connection instructions…"></textarea></label>
       <div class="formfoot"><button id="typeBtn">Create type</button><span class="err" id="t_err"></span></div>
     </div>
   </details>
@@ -190,7 +194,8 @@ function renderTypes() {
   const rows = DATA.types.map((t) => {
     const bits = [t.durationMin ? `${t.durationMin}min` : null, windowBits(t.window),
       t.dailyCap != null ? `cap ${t.dailyCap}/day` : null,
-      t.minNoticeHours != null ? `${t.minNoticeHours}h notice` : null].filter(Boolean).join(" · ") || "inherits defaults";
+      t.minNoticeHours != null ? `${t.minNoticeHours}h notice` : null,
+      t.prepMinutes ? `${t.prepMinutes}min prep` : null].filter(Boolean).join(" · ") || "inherits defaults";
     return `
     <div class="row${t.disabled ? " off" : ""}">
       <span class="grow"><b>${t.accentColor ? `<i class="swatch" style="background:${esc(t.accentColor)}"></i>` : ""}${esc(t.label)}</b>
@@ -258,8 +263,10 @@ el("typeBtn").onclick = async () => {
       dailyCap: el("t_cap").value || null, minNoticeHours: el("t_notice").value || null,
       maxDaysOut: el("t_maxdays").value || null, accentColor: el("t_accent").value.trim() || null,
       eventTitle: el("t_event").value || null, pageDescription: el("t_desc").value || null,
+      eventDescription: el("t_invitedesc").value || null, eventLocation: el("t_loc").value.trim() || null,
+      prepMinutes: el("t_prep").value || null, addMeet: el("t_meet").value || null,
     });
-    for (const id of ["t_label","t_key","t_duration","t_step","t_days","t_start","t_end","t_cap","t_notice","t_maxdays","t_accent","t_event","t_desc"]) el(id).value = "";
+    for (const id of ["t_label","t_key","t_duration","t_step","t_days","t_start","t_end","t_cap","t_notice","t_maxdays","t_accent","t_event","t_desc","t_invitedesc","t_loc","t_prep","t_meet"]) el(id).value = "";
     el("typeBox").open = false;
     toast("type created");
     refresh();

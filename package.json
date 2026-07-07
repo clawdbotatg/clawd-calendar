@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "GCAL_FAKE=1 node server.js",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.js\""
   },
   "engines": { "node": ">=22.5" },
   "license": "MIT"

@@ -52,7 +52,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const key = flag("key");
 if (!label || !key) {
-  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"]');
+  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"] [--event-desc <invite text>] [--location <URL or place>] [--prep <min before, owner-only block>] [--meet|--no-meet]');
   process.exit(1);
 }
 if (!/^[a-z0-9_-]{1,32}$/.test(key)) { console.error(`bad key "${key}" — lowercase letters/digits/-/_ only`); process.exit(1); }
@@ -75,6 +75,10 @@ db.createType({
   minNoticeHours: flag("min-notice") ? +flag("min-notice") : null,
   maxDaysOut: flag("max-days") ? +flag("max-days") : null,
   eventTitle: flag("event-title"),
+  eventDescription: flag("event-desc"),
+  eventLocation: flag("location"),
+  prepMinutes: flag("prep") ? +flag("prep") : null,
+  addMeet: has("no-meet") ? false : has("meet") ? true : null,
   pageTitle: flag("title"),
   pageSubtitle: flag("subtitle"),
   pageDescription: flag("desc"),

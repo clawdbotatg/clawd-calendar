@@ -152,15 +152,34 @@ async function handleBook(req, res) {
 
     const summary = (cfg.eventTitle || "Call: {name}").replace("{name}", name);
     const description =
+      (cfg.eventDescription ? `${cfg.eventDescription}\n\n———\n` : "") +
       `Booked via ${cfg.baseUrl}${type ? ` (${type.label})` : ""} (link: ${token.label})` +
       (note ? `\n\nNote from ${name}:\n${note}` : "");
     const ev = await gcal.createEvent({
       calendarId: cfg.calendarId,
       summary, description,
+      location: cfg.eventLocation || null,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
       guestEmail: email, guestName: name,
       addMeet: !!cfg.addMeetLink,
     });
+    // Owner-only prep block right before the event (e.g. 15 min before each
+    // episode). Best-effort: a prep hiccup must not fail the booking the
+    // guest already has an invite for.
+    if (cfg.prepMinutes > 0) {
+      try {
+        await gcal.createOwnerEvent({
+          calendarId: cfg.calendarId,
+          summary: `Prepare: ${summary}`,
+          description: `${cfg.prepMinutes}-min prep before "${summary}" with ${name} <${email}>.` +
+            (note ? `\n\nNote from ${name}:\n${note}` : ""),
+          startUtc: new Date(Date.parse(slot.startUtc) - cfg.prepMinutes * 60_000).toISOString(),
+          endUtc: slot.startUtc,
+        });
+      } catch (err) {
+        console.error(`[book] prep event failed (booking kept): ${err.message}`);
+      }
+    }
     db.logBooking({
       token: token.token, typeKey: token.typeKey || null, guestName: name, guestEmail: email, note,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
@@ -319,6 +338,10 @@ async function handleAdminApi(req, res, url) {
       dailyCap: optNum(body.dailyCap), minNoticeHours: optNum(body.minNoticeHours),
       maxDaysOut: optNum(body.maxDaysOut),
       eventTitle: body.eventTitle ? String(body.eventTitle).slice(0, 200) : null,
+      eventDescription: body.eventDescription ? String(body.eventDescription).slice(0, 4000) : null,
+      eventLocation: body.eventLocation ? String(body.eventLocation).slice(0, 500) : null,
+      prepMinutes: optNum(body.prepMinutes),
+      addMeet: body.addMeet == null || body.addMeet === "" ? null : !!+body.addMeet,
       pageTitle: body.pageTitle ? String(body.pageTitle).slice(0, 200) : null,
       pageSubtitle: body.pageSubtitle ? String(body.pageSubtitle).slice(0, 200) : null,
       pageDescription: body.pageDescription ? String(body.pageDescription).slice(0, 2000) : null,
