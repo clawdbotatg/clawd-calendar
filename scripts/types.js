@@ -21,8 +21,7 @@ const argv = process.argv.slice(2);
 function flag(name) { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : null; }
 function has(name) { return argv.includes(`--${name}`); }
 
-// "a" is the built-in default type; the rest shadow real routes.
-const RESERVED = ["a", "api", "oauth", "healthz", "assets", "public", "data"];
+const RESERVED = db.RESERVED_KEYS;
 
 if (has("list")) {
   for (const t of db.listTypes()) {

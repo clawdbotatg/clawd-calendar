@@ -5,6 +5,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const { getOpenSlots, effectiveRules, applyType } = require("./lib/slots");
 const db = require("./lib/db");
@@ -227,6 +228,141 @@ location.replace(${JSON.stringify(back)});
 </script>`);
 }
 
+// ── admin (/admin/<password>) ────────────────────────────────────────────
+// One password (CAL_ADMIN_PASSWORD; unset = admin off) gates a page + JSON
+// API for the things scripts/types.js and scripts/mint.js do over ssh:
+// event types, links, and a bookings view. The page carries the password in
+// its path (same pattern as guest links); API calls send it in x-admin-pw.
+
+function adminOk(supplied) {
+  if (!CONFIG.adminPassword || !supplied) return false;
+  const h = (s) => crypto.createHash("sha256").update(String(s)).digest();
+  return crypto.timingSafeEqual(h(supplied), h(CONFIG.adminPassword));
+}
+
+// True = proceed; false = a 404/429 was already sent (flat-cost + rate-limited
+// failures, like bad guest passwords).
+async function requireAdmin(req, res, supplied) {
+  if (adminOk(supplied)) return true;
+  if (!rateLimit(`adminfail:${clientIp(req)}`, 20, 3_600_000)) { json(res, 429, { error: "slow down" }); return false; }
+  await sleep(300);
+  json(res, 404, { error: "not found" });
+  return false;
+}
+
+async function handleAdminPage(req, res, pw) {
+  if (!(await requireAdmin(req, res, pw))) return;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer", // password lives in the URL
+  });
+  res.end(fs.readFileSync(path.join(PUBLIC_DIR, "admin.html")));
+}
+
+const optNum = (v) => { const n = +v; return v == null || v === "" || !Number.isFinite(n) ? null : n; };
+const DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+function windowFromBody(body) {
+  if (!body.days && !body.start && !body.end) return { window: null };
+  const days = String(body.days || "mon,tue,wed,thu,fri").split(",")
+    .map((s) => s.trim().toLowerCase()).filter((d) => DAY_NAMES.includes(d));
+  const start = String(body.start || "08:00"), end = String(body.end || "17:00");
+  if (!days.length) return { error: "no valid days (mon..sun)" };
+  if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return { error: "start/end must be HH:MM" };
+  return { window: { days, start, end } };
+}
+
+async function handleAdminApi(req, res, url) {
+  if (!(await requireAdmin(req, res, req.headers["x-admin-pw"]))) return;
+  const link = (t) => `${CONFIG.baseUrl}/${encodeURIComponent(t.typeKey || "a")}/${encodeURIComponent(t.token)}`;
+
+  if (url.pathname === "/api/admin/overview" && req.method === "GET") {
+    const now = new Date().toISOString();
+    const all = db.listBookings();
+    return json(res, 200, {
+      ownerName: CONFIG.ownerName, ownerTz: CONFIG.ownerTz, baseUrl: CONFIG.baseUrl,
+      defaults: {
+        slotMinutes: CONFIG.slotMinutes, stepMinutes: CONFIG.slotStepMinutes,
+        window: CONFIG.window, dailyCap: CONFIG.dailyCap,
+        minNoticeHours: CONFIG.minNoticeHours, maxDaysOut: CONFIG.maxDaysOut,
+      },
+      types: db.listTypes().map((t) => ({ ...t, window: t.window ? JSON.parse(t.window) : null })),
+      tokens: db.listTokens().map((t) => ({
+        ...t, windowOverride: t.windowOverride ? JSON.parse(t.windowOverride) : null, link: link(t),
+      })),
+      bookings: {
+        upcoming: all.filter((b) => b.status === "booked" && b.startUtc >= now),
+        past: all.filter((b) => b.startUtc < now).slice(-30).reverse(),
+      },
+    });
+  }
+
+  if (req.method !== "POST") return json(res, 404, { error: "not found" });
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad json" }); }
+
+  if (url.pathname === "/api/admin/types") {
+    const key = String(body.key || "").trim();
+    const label = String(body.label || "").trim().slice(0, 80);
+    if (!label) return json(res, 400, { error: "label required" });
+    if (!/^[a-z0-9_-]{1,32}$/.test(key)) return json(res, 400, { error: "bad key — lowercase letters/digits/-/_ only" });
+    if (db.RESERVED_KEYS.includes(key)) return json(res, 400, { error: `key "${key}" is reserved` });
+    if (db.listTypes().some((t) => t.key === key)) return json(res, 409, { error: `type "${key}" already exists` });
+    const accent = body.accentColor ? String(body.accentColor).trim() : null;
+    if (accent && !/^#[0-9a-fA-F]{6}$/.test(accent)) return json(res, 400, { error: "accent must be #rrggbb" });
+    const w = windowFromBody(body);
+    if (w.error) return json(res, 400, { error: w.error });
+    db.createType({
+      key, label, window: w.window,
+      durationMin: optNum(body.durationMin), stepMinutes: optNum(body.stepMinutes),
+      dailyCap: optNum(body.dailyCap), minNoticeHours: optNum(body.minNoticeHours),
+      maxDaysOut: optNum(body.maxDaysOut),
+      eventTitle: body.eventTitle ? String(body.eventTitle).slice(0, 200) : null,
+      pageTitle: body.pageTitle ? String(body.pageTitle).slice(0, 200) : null,
+      pageSubtitle: body.pageSubtitle ? String(body.pageSubtitle).slice(0, 200) : null,
+      pageDescription: body.pageDescription ? String(body.pageDescription).slice(0, 2000) : null,
+      accentColor: accent,
+    });
+    console.log(`[admin] created type "${key}"`);
+    return json(res, 200, { ok: true, key });
+  }
+
+  if (url.pathname === "/api/admin/types/toggle") {
+    const ok = db.setTypeDisabled(String(body.key || ""), !!body.disabled);
+    return ok ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such type" });
+  }
+
+  if (url.pathname === "/api/admin/mint") {
+    const label = String(body.label || "").trim().slice(0, 120);
+    if (!label) return json(res, 400, { error: "label required" });
+    const tier = body.tier || "standard";
+    if (!["standard", "vip", "override"].includes(tier)) return json(res, 400, { error: "bad tier" });
+    let typeKey = body.typeKey || null;
+    if (typeKey === "a") typeKey = null;
+    if (typeKey && !db.listTypes().some((t) => t.key === typeKey)) return json(res, 400, { error: `no such event type "${typeKey}"` });
+    const token = body.token ? String(body.token).trim() : crypto.randomBytes(6).toString("base64url");
+    if (!/^\S{4,64}$/.test(token) || token.includes("/")) return json(res, 400, { error: "password: 4–64 chars, no spaces or /" });
+    if (db.listTokens().some((t) => t.token === token)) return json(res, 409, { error: "that password already exists" });
+    const w = windowFromBody(body);
+    if (w.error) return json(res, 400, { error: w.error });
+    db.createToken({
+      token, label, tier, typeKey,
+      durationMin: optNum(body.durationMin), maxUses: optNum(body.maxUses),
+      windowOverride: w.window,
+    });
+    console.log(`[admin] minted [${tier}] "${label}"${typeKey ? ` (type: ${typeKey})` : ""}`);
+    return json(res, 200, { ok: true, token, link: link({ typeKey, token }) });
+  }
+
+  if (url.pathname === "/api/admin/tokens/toggle") {
+    const ok = db.setTokenDisabled(String(body.token || ""), !!body.disabled);
+    return ok ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such link" });
+  }
+
+  return json(res, 404, { error: "not found" });
+}
+
 // index.html is served with OG/title placeholders filled from config (or the
 // route's event type), so unfurl cards and the tab title follow without a
 // build step.
@@ -247,6 +383,7 @@ function serveIndex(res, type = null) {
 // images: avatar, favicons, og card — never committed), then public/.
 const ASSETS_DIR = path.join(__dirname, "assets");
 function serveStatic(res, file) {
+  if (file === "admin.html") { res.writeHead(404); return res.end("not found"); } // only via /admin/<pw>
   let p = null;
   for (const dir of [ASSETS_DIR, PUBLIC_DIR]) {
     const cand = path.join(dir, file);
@@ -267,8 +404,11 @@ const server = http.createServer(async (req, res) => {
       return await handleSlots(req, res, url);
     }
     if (url.pathname === "/api/book" && req.method === "POST") return await handleBook(req, res);
+    if (url.pathname.startsWith("/api/admin/")) return await handleAdminApi(req, res, url);
     if (url.pathname === "/oauth/guest/start") return await handleGuestStart(req, res, url);
     if (url.pathname === "/oauth/callback") return await handleGuestCallback(req, res, url);
+    const adm = url.pathname.match(/^\/admin\/([^/]+)$/);
+    if (adm && req.method === "GET") return await handleAdminPage(req, res, decodeURIComponent(adm[1]));
     // The single page serves the password gate (/) and the picker at
     // /<typeKey>/<pw> — "a" is the built-in default type; other keys are
     // event_types rows (API/oauth routes are matched above, so they can't

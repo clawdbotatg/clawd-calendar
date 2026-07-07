@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Calendar admin</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b;
+    --line: #e4e4e0; --accent: #81d555; --accent-ink: #0e1a08; --ok: #16a34a; --bad: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101012; --card: #1a1a1e; --ink: #ececec; --muted: #9a9aa2;
+            --line: #2a2a30; --accent: #81d555; --ok: #22c55e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 2px; }
+  h2 { font-size: 1.05rem; margin: 32px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 8px; }
+  a { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); padding: 0; }
+  .row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+         padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row.off { opacity: .45; }
+  .row .grow { flex: 1 1 200px; min-width: 0; }
+  .row b { font-weight: 650; }
+  .meta { color: var(--muted); font-size: .84rem; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84rem; }
+  .badge { display: inline-block; font-size: .72rem; font-weight: 700; text-transform: uppercase;
+           letter-spacing: .04em; padding: 1px 7px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.vip { border-color: var(--accent); color: var(--accent); }
+  .badge.override { border-color: var(--bad); color: var(--bad); }
+  .swatch { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; margin-right: 5px; }
+  button { background: var(--accent); color: var(--accent-ink); border: 0; padding: 8px 14px;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: none; color: var(--muted); border: 1px solid var(--line);
+                 padding: 3px 10px; font-size: .8rem; font-weight: 500; }
+  button.ghost:hover { color: var(--ink); }
+  .empty { color: var(--muted); padding: 14px; font-size: .9rem; }
+  .err { color: var(--bad); min-height: 1.2em; margin: 8px 0 0; font-size: .9rem; }
+  details { border: 1px dashed var(--line); margin-top: 10px; }
+  summary { cursor: pointer; padding: 10px 14px; font-weight: 600; color: var(--accent); }
+  details > div { padding: 4px 14px 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 14px; }
+  label { display: block; font-size: .8rem; color: var(--muted); margin-top: 10px; }
+  input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font: inherit; margin-top: 4px; }
+  textarea { resize: vertical; min-height: 56px; }
+  .formfoot { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+  .minted { background: color-mix(in srgb, var(--accent) 12%, var(--card));
+            border: 1px solid var(--accent); padding: 10px 14px; margin-top: 12px;
+            font-size: .9rem; word-break: break-all; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+           background: var(--ink); color: var(--bg); padding: 8px 18px; font-size: .85rem;
+           opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Calendar admin</h1>
+  <p class="sub" id="who">loading…</p>
+
+  <h2>Upcoming bookings</h2>
+  <div class="card" id="upcoming"></div>
+
+  <h2>Links (passwords)</h2>
+  <div class="card" id="tokens"></div>
+  <details id="mintBox">
+    <summary>+ Mint a link</summary>
+    <div>
+      <div class="grid">
+        <span><label>Who is this for? *<input id="m_label" placeholder="podcast guests"></label></span>
+        <span><label>Tier<select id="m_tier">
+          <option value="standard">standard — normal rules</option>
+          <option value="vip">vip — any time I'm free</option>
+          <option value="override">override — busy ignored</option>
+        </select></label></span>
+        <span><label>Event type<select id="m_type"></select></label></span>
+        <span><label>Custom password (blank = random)<input id="m_token" placeholder="hello-austin"></label></span>
+        <span><label>Max uses (blank = unlimited)<input id="m_maxUses" type="number" min="1"></label></span>
+        <span><label>Duration override, min<input id="m_duration" type="number" min="5"></label></span>
+      </div>
+      <div class="formfoot"><button id="mintBtn">Mint link</button><span class="err" id="m_err"></span></div>
+      <div class="minted" id="minted" hidden></div>
+    </div>
+  </details>
+
+  <h2>Event types</h2>
+  <p class="sub">Each type is its own route + rules; links are minted into a type. <span class="mono" id="defaults"></span></p>
+  <div class="card" id="types"></div>
+  <details id="typeBox">
+    <summary>+ New event type</summary>
+    <div>
+      <div class="grid">
+        <span><label>Label *<input id="t_label" placeholder="Office Hours"></label></span>
+        <span><label>Key (URL route) *<input id="t_key" placeholder="office" class="mono"></label></span>
+        <span><label>Duration, min<input id="t_duration" type="number" min="5" placeholder="30"></label></span>
+        <span><label>Start step, min<input id="t_step" type="number" min="5" placeholder="30"></label></span>
+        <span><label>Days (blank = default window)<input id="t_days" placeholder="fri  or  mon,wed,fri"></label></span>
+        <span><label>Window start<input id="t_start" placeholder="14:00"></label></span>
+        <span><label>Window end<input id="t_end" placeholder="16:00"></label></span>
+        <span><label>Daily cap (per type)<input id="t_cap" type="number" min="1"></label></span>
+        <span><label>Min notice, hours<input id="t_notice" type="number" min="0" step="0.5"></label></span>
+        <span><label>Max days out<input id="t_maxdays" type="number" min="1"></label></span>
+        <span><label>Accent color<input id="t_accent" placeholder="#f5a623" class="mono"></label></span>
+        <span><label>Calendar event title<input id="t_event" placeholder="Office hours: {name}"></label></span>
+      </div>
+      <label>Page description<textarea id="t_desc" placeholder="Drop-in — 30 minutes, Fridays."></textarea></label>
+      <div class="formfoot"><button id="typeBtn">Create type</button><span class="err" id="t_err"></span></div>
+    </div>
+  </details>
+
+  <h2>Past bookings</h2>
+  <div class="card" id="past"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const pw = decodeURIComponent(location.pathname.split("/")[2] || "");
+let DATA = null;
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "content-type": "application/json", "x-admin-pw": pw },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `error ${r.status}`);
+  return d;
+}
+
+const el = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+function toast(msg) {
+  const t = el("toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("on"), 1600);
+}
+async function copy(text) { try { await navigator.clipboard.writeText(text); toast("copied"); } catch { prompt("copy:", text); } }
+
+function fmtWhen(iso) {
+  return new Intl.DateTimeFormat("en-US", { timeZone: DATA.ownerTz, weekday: "short",
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+const windowBits = (w) => w ? `${w.days.join("/")} ${w.start}–${w.end}` : null;
+const typeLabel = (key) => key ? ((DATA.types.find((t) => t.key === key) || {}).label || key) : null;
+
+function renderBookings(id, list) {
+  el(id).innerHTML = list.length ? list.map((b) => `
+    <div class="row">
+      <span class="grow"><b>${esc(b.guestName)}</b> <span class="meta">${esc(b.guestEmail)}</span>
+        ${b.note ? `<div class="meta">“${esc(b.note.slice(0, 200))}”</div>` : ""}</span>
+      <span class="meta">${b.typeKey ? esc(typeLabel(b.typeKey)) + " · " : ""}via “${esc(b.token)}”</span>
+      <span><b>${fmtWhen(b.startUtc)}</b></span>
+      ${b.meetLink ? `<a href="${esc(b.meetLink)}" target="_blank" rel="noopener">meet</a>` : ""}
+    </div>`).join("") : `<div class="empty">none</div>`;
+}
+
+function renderTokens() {
+  el("tokens").innerHTML = DATA.tokens.length ? DATA.tokens.map((t) => {
+    const uses = t.maxUses != null ? `${t.uses}/${t.maxUses}` : `${t.uses}`;
+    const bits = [t.typeKey ? typeLabel(t.typeKey) : null, t.durationMin ? `${t.durationMin}min` : null,
+      windowBits(t.windowOverride), `uses: ${uses}`].filter(Boolean).join(" · ");
+    return `
+    <div class="row${t.disabled ? " off" : ""}">
+      <span class="grow"><b>${esc(t.label)}</b> <span class="badge ${t.tier}">${t.tier}</span>
+        <div class="meta">${esc(bits)}</div>
+        <div class="mono meta">${esc(t.link)}</div></span>
+      <button class="ghost" onclick="copy(${esc(JSON.stringify(t.link))})">copy link</button>
+      <button class="ghost" onclick="toggleToken(${esc(JSON.stringify(t.token))}, ${t.disabled ? 0 : 1})">
+        ${t.disabled ? "enable" : "disable"}</button>
+    </div>`;
+  }).join("") : `<div class="empty">no links yet — mint one below</div>`;
+}
+
+function renderTypes() {
+  const d = DATA.defaults;
+  el("defaults").textContent =
+    `defaults: ${d.slotMinutes}min · ${windowBits(d.window)} · cap ${d.dailyCap}/day · ${d.minNoticeHours}h notice · ${d.maxDaysOut}d out`;
+  const rows = DATA.types.map((t) => {
+    const bits = [t.durationMin ? `${t.durationMin}min` : null, windowBits(t.window),
+      t.dailyCap != null ? `cap ${t.dailyCap}/day` : null,
+      t.minNoticeHours != null ? `${t.minNoticeHours}h notice` : null].filter(Boolean).join(" · ") || "inherits defaults";
+    return `
+    <div class="row${t.disabled ? " off" : ""}">
+      <span class="grow"><b>${t.accentColor ? `<i class="swatch" style="background:${esc(t.accentColor)}"></i>` : ""}${esc(t.label)}</b>
+        <span class="mono meta">/${esc(t.key)}/…</span>
+        <div class="meta">${esc(bits)}</div></span>
+      <button class="ghost" onclick="mintInto(${esc(JSON.stringify(t.key))})">mint link</button>
+      <button class="ghost" onclick="toggleType(${esc(JSON.stringify(t.key))}, ${t.disabled ? 0 : 1})">
+        ${t.disabled ? "enable" : "disable"}</button>
+    </div>`;
+  });
+  el("types").innerHTML = `
+    <div class="row"><span class="grow"><b>Default call</b> <span class="mono meta">/a/…</span>
+      <div class="meta">the built-in type — env config rules</div></span></div>` + rows.join("");
+  el("m_type").innerHTML = `<option value="a">default call (/a/)</option>` +
+    DATA.types.filter((t) => !t.disabled).map((t) => `<option value="${esc(t.key)}">${esc(t.label)} (/${esc(t.key)}/)</option>`).join("");
+}
+
+async function refresh() {
+  DATA = await api("/api/admin/overview");
+  el("who").textContent = `${DATA.ownerName} · ${DATA.baseUrl} · times shown in ${DATA.ownerTz}`;
+  renderBookings("upcoming", DATA.bookings.upcoming);
+  renderBookings("past", DATA.bookings.past);
+  renderTypes();  // before tokens/bookings: they name types via typeLabel
+  renderTokens();
+}
+
+window.toggleToken = async (token, disabled) => { await api("/api/admin/tokens/toggle", { token, disabled: !!disabled }); refresh(); };
+window.toggleType = async (key, disabled) => {
+  if (disabled && !confirm(`Disable "${key}"? Every link minted into it stops working until re-enabled.`)) return;
+  await api("/api/admin/types/toggle", { key, disabled: !!disabled }); refresh();
+};
+window.mintInto = (key) => {
+  el("mintBox").open = true;
+  el("m_type").value = key;
+  el("m_label").focus();
+  el("mintBox").scrollIntoView({ behavior: "smooth", block: "center" });
+};
+window.copy = copy;
+
+el("mintBtn").onclick = async () => {
+  el("m_err").textContent = "";
+  try {
+    const d = await api("/api/admin/mint", {
+      label: el("m_label").value, tier: el("m_tier").value, typeKey: el("m_type").value,
+      token: el("m_token").value.trim() || null,
+      maxUses: el("m_maxUses").value || null, durationMin: el("m_duration").value || null,
+    });
+    const box = el("minted");
+    box.hidden = false;
+    box.innerHTML = `minted — password <b class="mono">${esc(d.token)}</b><br>
+      <a href="${esc(d.link)}" target="_blank" rel="noopener" class="mono">${esc(d.link)}</a>
+      <button class="ghost" onclick="copy(${esc(JSON.stringify(d.link))})">copy</button>`;
+    el("m_label").value = el("m_token").value = el("m_maxUses").value = el("m_duration").value = "";
+    refresh();
+  } catch (e) { el("m_err").textContent = e.message; }
+};
+
+el("typeBtn").onclick = async () => {
+  el("t_err").textContent = "";
+  try {
+    await api("/api/admin/types", {
+      label: el("t_label").value, key: el("t_key").value.trim().toLowerCase(),
+      durationMin: el("t_duration").value || null, stepMinutes: el("t_step").value || null,
+      days: el("t_days").value.trim() || null, start: el("t_start").value.trim() || null, end: el("t_end").value.trim() || null,
+      dailyCap: el("t_cap").value || null, minNoticeHours: el("t_notice").value || null,
+      maxDaysOut: el("t_maxdays").value || null, accentColor: el("t_accent").value.trim() || null,
+      eventTitle: el("t_event").value || null, pageDescription: el("t_desc").value || null,
+    });
+    for (const id of ["t_label","t_key","t_duration","t_step","t_days","t_start","t_end","t_cap","t_notice","t_maxdays","t_accent","t_event","t_desc"]) el(id).value = "";
+    el("typeBox").open = false;
+    toast("type created");
+    refresh();
+  } catch (e) { el("t_err").textContent = e.message; }
+};
+
+refresh().catch((e) => { el("who").textContent = e.message; });
+</script>
+</body>
+</html>

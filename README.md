@@ -95,6 +95,14 @@ node scripts/types.js --disable office   # kills all its links (--enable undoes)
 A password typed on the landing page finds its own event type — the page
 redirects itself to the right route.
 
+## Admin page
+
+Set `CAL_ADMIN_PASSWORD` and `/admin/<password>` becomes a one-page admin:
+upcoming + past bookings, every link (copy/disable/enable, use counts), and
+event types (create, disable, mint a link straight into one). It does the
+same things `scripts/types.js` / `scripts/mint.js` do over ssh — use
+whichever is closer. Unset (the default), the route doesn't exist.
+
 ## Google OAuth prereq (one-time, ~5 min)
 
 `node scripts/auth.js` walks you through it (full steps in the script
@@ -121,6 +129,6 @@ stays the source of truth for busy time.
 
 - **Phase 2** — optional guest calendar overlay (Google OAuth,
   `calendar.freebusy` scope only) to grey out mutually-busy slots.
-- **Phase 3** — tiny admin page (mint links, upcoming bookings), reminders,
-  first-party cancel/reschedule.
+- **Phase 3** — ~~tiny admin page (mint links, upcoming bookings)~~ (shipped),
+  reminders, first-party cancel/reschedule.
 - **Phase 4** — voice agent: same `getOpenSlots()`/book endpoints, third client.
