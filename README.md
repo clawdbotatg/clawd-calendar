@@ -72,6 +72,29 @@ node scripts/mint.js --list
 
 Per-token overrides (window/duration/cap) work on any tier.
 
+## Event types (different kinds of links)
+
+Beyond the default call, each **event type** is its own route
+(`/<key>/<password>`) with its own landing style and rules — duration,
+weekly window, per-type daily cap (office hours filling up doesn't consume
+the one-call-per-day budget), min notice, calendar event title, page
+title/description, and an accent color that re-themes the whole page.
+Anything unset inherits the env config. Resolution chain:
+env config → event type → token (tiers still work inside any type).
+
+```bash
+node scripts/types.js "Office Hours" --key office --duration 30 \
+     --days fri --start 14:00 --end 16:00 --daily-cap 4 \
+     --accent "#f5a623" --desc "Drop-in office hours — 30 min, Fridays." \
+     --event-title "Office hours: {name}"
+node scripts/mint.js "students" --type office --token <password>   # → /office/<password>
+node scripts/types.js --list
+node scripts/types.js --disable office   # kills all its links (--enable undoes)
+```
+
+A password typed on the landing page finds its own event type — the page
+redirects itself to the right route.
+
 ## Google OAuth prereq (one-time, ~5 min)
 
 `node scripts/auth.js` walks you through it (full steps in the script

@@ -6,7 +6,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { getOpenSlots, effectiveRules } = require("./lib/slots");
+const { getOpenSlots, effectiveRules, applyType } = require("./lib/slots");
 const db = require("./lib/db");
 const gcal = require("./lib/gcal");
 const { dayKey } = require("./lib/tz");
@@ -69,38 +69,52 @@ async function lookupToken(raw) {
   return row;
 }
 
+// Token → its event type → the config as that type sees it. A token minted
+// for a type whose type row is gone/disabled is a dead link.
+async function resolveAccess(raw) {
+  const token = await lookupToken(raw);
+  if (!token) return null;
+  const type = token.typeKey ? db.getType(token.typeKey) : null;
+  if (token.typeKey && !type) { await sleep(300); return null; }
+  return { token, type, cfg: applyType(CONFIG, type) };
+}
+
 // Slot computation shared by GET /api/slots and the book-time re-check.
-async function computeSlots(token, now = Date.now()) {
-  const horizonMs = (CONFIG.maxDaysOut + 2) * 86_400_000;
-  const rules = effectiveRules(CONFIG, token);
+async function computeSlots({ token, cfg }, now = Date.now()) {
+  const horizonMs = (cfg.maxDaysOut + 2) * 86_400_000;
+  const rules = effectiveRules(cfg, token);
   const busy = rules.ignoreBusy ? [] : await gcal.freeBusy(
-    CONFIG.calendarId,
+    cfg.calendarId,
     new Date(now).toISOString(),
     new Date(now + horizonMs).toISOString()
   );
-  const slots = getOpenSlots({ config: CONFIG, token, busy, bookedByDay: db.bookedByDay(), now });
+  const slots = getOpenSlots({ config: cfg, token, busy, bookedByDay: db.bookedByDay(token.typeKey || null), now });
   return { slots, rules };
 }
 
 // ---------- routes ----------
 
 async function handleSlots(req, res, url) {
-  const token = await lookupToken(url.searchParams.get("token"));
-  if (!token) return json(res, 404, { error: "unknown link" });
-  const { slots, rules } = await computeSlots(token);
+  const access = await resolveAccess(url.searchParams.get("token"));
+  if (!access) return json(res, 404, { error: "unknown link" });
+  const { token, type, cfg } = access;
+  const { slots, rules } = await computeSlots(access);
   json(res, 200, {
-    ownerName: CONFIG.ownerName,
-    ownerTz: CONFIG.ownerTz,
-    pageTitle: CONFIG.pageTitle,
-    pageSubtitle: CONFIG.pageSubtitle,
-    pageDescription: CONFIG.pageDescription,
-    avatarUrl: CONFIG.avatarUrl,
+    ownerName: cfg.ownerName,
+    ownerTz: cfg.ownerTz,
+    typeKey: token.typeKey || "a",
+    typeLabel: type ? type.label : null,
+    accentColor: cfg.accentColor || null,
+    pageTitle: cfg.pageTitle,
+    pageSubtitle: cfg.pageSubtitle,
+    pageDescription: cfg.pageDescription,
+    avatarUrl: cfg.avatarUrl,
     tier: token.tier,
     label: token.label,
     durationMin: rules.durationMin,
-    stepMinutes: CONFIG.slotStepMinutes || rules.durationMin,
+    stepMinutes: cfg.slotStepMinutes || rules.durationMin,
     pickAnything: !!rules.ignoreBusy,
-    maxDaysOut: CONFIG.maxDaysOut,
+    maxDaysOut: cfg.maxDaysOut,
     overlay: gcal.FAKE || !!gcal.webCreds(), // guest calendar-connect available?
     slots,
   });
@@ -117,8 +131,9 @@ async function handleBook(req, res) {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad json" }); }
 
-  const token = await lookupToken(body.token);
-  if (!token) return json(res, 404, { error: "unknown link" });
+  const access = await resolveAccess(body.token);
+  if (!access) return json(res, 404, { error: "unknown link" });
+  const { token, type, cfg } = access;
 
   const name = String(body.name || "").trim().slice(0, 120);
   const email = String(body.email || "").trim().slice(0, 200);
@@ -130,27 +145,28 @@ async function handleBook(req, res) {
 
   const result = await (bookingChain = bookingChain.catch(() => {}).then(async () => {
     // Book-time re-check: recompute fresh and require the exact slot.
-    const { slots, rules } = await computeSlots(token);
+    const { slots, rules } = await computeSlots(access);
     const slot = slots.find((s) => Date.parse(s.startUtc) === Date.parse(startUtc));
     if (!slot) return { code: 409, body: { error: "slot just taken — pick another" } };
 
-    const summary = (CONFIG.eventTitle || "Call: {name}").replace("{name}", name);
+    const summary = (cfg.eventTitle || "Call: {name}").replace("{name}", name);
     const description =
-      `Booked via ${CONFIG.baseUrl} (link: ${token.label})` + (note ? `\n\nNote from ${name}:\n${note}` : "");
+      `Booked via ${cfg.baseUrl}${type ? ` (${type.label})` : ""} (link: ${token.label})` +
+      (note ? `\n\nNote from ${name}:\n${note}` : "");
     const ev = await gcal.createEvent({
-      calendarId: CONFIG.calendarId,
+      calendarId: cfg.calendarId,
       summary, description,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
       guestEmail: email, guestName: name,
-      addMeet: !!CONFIG.addMeetLink,
+      addMeet: !!cfg.addMeetLink,
     });
     db.logBooking({
-      token: token.token, guestName: name, guestEmail: email, note,
+      token: token.token, typeKey: token.typeKey || null, guestName: name, guestEmail: email, note,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
-      ownerDayKey: dayKey(Date.parse(slot.startUtc), CONFIG.ownerTz),
+      ownerDayKey: dayKey(Date.parse(slot.startUtc), cfg.ownerTz),
       gcalEventId: ev.id, meetLink: ev.meetLink,
     });
-    console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier})`);
+    console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier}${token.typeKey ? `, type ${token.typeKey}` : ""})`);
     return { code: 200, body: { ok: true, startUtc: slot.startUtc, endUtc: slot.endUtc, meetLink: ev.meetLink } };
   }));
   json(res, result.code, result.body);
@@ -184,7 +200,7 @@ async function handleGuestCallback(req, res, url) {
   const isPublic = state === "@public";
   const token = await lookupToken(isPublic ? "" : state);
   if (!token) return json(res, 404, { error: "unknown link" });
-  const back = isPublic ? "/" : `/a/${encodeURIComponent(token.token)}`;
+  const back = isPublic ? "/" : `/${encodeURIComponent(token.typeKey || "a")}/${encodeURIComponent(token.token)}`;
   if (!code) { res.writeHead(302, { Location: back }); return res.end(); }
 
   // Degrade gracefully: a guest whose account has no Google Calendar (or a
@@ -211,12 +227,14 @@ location.replace(${JSON.stringify(back)});
 </script>`);
 }
 
-// index.html is served with OG/title placeholders filled from config, so
-// unfurl cards and the tab title follow the env without a build step.
-function serveIndex(res) {
+// index.html is served with OG/title placeholders filled from config (or the
+// route's event type), so unfurl cards and the tab title follow without a
+// build step.
+function serveIndex(res, type = null) {
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const title = CONFIG.pageTitle || `Book a call with ${CONFIG.ownerName}`;
-  const desc = CONFIG.pageDescription || `${CONFIG.slotMinutes}-minute call — pick a time that works for you.`;
+  const cfg = applyType(CONFIG, type);
+  const title = cfg.pageTitle || `Book a call with ${cfg.ownerName}`;
+  const desc = cfg.pageDescription || `${cfg.slotMinutes}-minute ${type ? type.label.toLowerCase() : "call"} — pick a time that works for you.`;
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
     .replaceAll("__OG_TITLE__", esc(title))
     .replaceAll("__OG_DESC__", esc(desc))
@@ -251,8 +269,17 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/book" && req.method === "POST") return await handleBook(req, res);
     if (url.pathname === "/oauth/guest/start") return await handleGuestStart(req, res, url);
     if (url.pathname === "/oauth/callback") return await handleGuestCallback(req, res, url);
-    // The single page serves both the password gate (/) and the picker (/a/<pw>).
-    if (url.pathname === "/" || /^\/a\/[^/]+$/.test(url.pathname)) return serveIndex(res);
+    // The single page serves the password gate (/) and the picker at
+    // /<typeKey>/<pw> — "a" is the built-in default type; other keys are
+    // event_types rows (API/oauth routes are matched above, so they can't
+    // collide). Unknown first segments fall through to static files.
+    if (url.pathname === "/") return serveIndex(res);
+    const page = url.pathname.match(/^\/([A-Za-z0-9_-]{1,32})\/[^/]+$/);
+    if (page) {
+      if (page[1] === "a") return serveIndex(res);
+      const type = db.getType(page[1]);
+      if (type) return serveIndex(res, type);
+    }
     return serveStatic(res, url.pathname.slice(1));
   } catch (err) {
     console.error(`[err] ${req.method} ${url.pathname}:`, err.message);

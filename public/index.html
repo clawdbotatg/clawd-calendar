@@ -223,8 +223,11 @@
     $("wrapEl").classList.toggle("wide", id === "picker");
   };
 
-  const m = location.pathname.match(/^\/a\/([^/]+)$/);
-  const token = m ? decodeURIComponent(m[1]) : null;
+  // /<typeKey>/<password> — "a" is the default event type; others style
+  // and rule the page differently (server tells us via /api/slots).
+  const m = location.pathname.match(/^\/([A-Za-z0-9_-]+)\/([^/]+)$/);
+  const pathType = m ? m[1] : null;
+  const token = m ? decodeURIComponent(m[2]) : null;
   let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let data = null, selected = null;
   let byDay = new Map();          // dayKey → { label, slots }
@@ -460,8 +463,22 @@
     sel.onchange = () => { guestTz = sel.value; regroup(); renderCalendar(); renderTimes(); };
   }
 
+  // Event-type accent recolors the whole page (every hue derives from
+  // --accent); ink flips dark/light by luminance so text stays readable.
+  function applyAccent(hex) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex || "")) return;
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    document.documentElement.style.setProperty("--accent", hex);
+    document.documentElement.style.setProperty("--accent-ink", 0.299 * r + 0.587 * g + 0.114 * b > 145 ? "#101010" : "#ffffff");
+  }
+
   function openPicker() {
     show("picker");
+    // Landed via the gate or a mismatched prefix? Settle on the token's
+    // real event-type route so copy/paste and reload keep working.
+    if (token && data.typeKey && pathType !== data.typeKey)
+      history.replaceState(null, "", `/${data.typeKey}/${encodeURIComponent(token)}`);
+    applyAccent(data.accentColor);
     const title = data.pageTitle || `Book a call with ${data.ownerName}`;
     document.title = title;
     $("title").textContent = title;

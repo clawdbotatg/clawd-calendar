@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { getOpenSlots } = require("../lib/slots");
+const { getOpenSlots, applyType } = require("../lib/slots");
 const { zonedToUtc, dayKey } = require("../lib/tz");
 
 const TZ = "America/Denver";
@@ -109,6 +109,40 @@ test("DST spring-forward day doesn't crash or duplicate (Mar 8 2026)", () => {
   assert.equal(starts.size, mar8.length, "no duplicate slots on DST day");
   // 8:00 MDT on Mar 8 = 14:00 UTC (MDT is UTC-6 after spring-forward)
   assert.equal(new Date(mar8[0].startUtc).toISOString(), "2026-03-08T14:00:00.000Z");
+});
+
+test("applyType overlays type rules onto config; unset fields inherit", () => {
+  const type = {
+    key: "office", label: "Office Hours", durationMin: 30, stepMinutes: 30,
+    window: { days: ["fri"], start: "14:00", end: "16:00" }, dailyCap: 4,
+    minNoticeHours: null, maxDaysOut: null, eventTitle: "Office hours: {name}",
+    pageTitle: null, pageSubtitle: null, pageDescription: null, accentColor: "#f5a623",
+  };
+  const cfg = applyType({ ...CONFIG, ownerName: "Austin", pageSubtitle: "a@b.c", pageDescription: "call desc" }, type);
+  assert.equal(cfg.slotMinutes, 30);
+  assert.deepEqual(cfg.window.days, ["fri"]);
+  assert.equal(cfg.dailyCap, 4);
+  assert.equal(cfg.minNoticeHours, CONFIG.minNoticeHours, "unset inherits config");
+  assert.equal(cfg.maxDaysOut, CONFIG.maxDaysOut);
+  assert.equal(cfg.pageTitle, "Office Hours with Austin", "typed page titles itself");
+  assert.equal(cfg.pageSubtitle, "a@b.c", "subtitle inherits");
+  assert.equal(cfg.pageDescription, "", "default-type description does NOT leak into a type");
+  assert.equal(cfg.accentColor, "#f5a623");
+  assert.equal(applyType(CONFIG, null), CONFIG, "no type = untouched config");
+});
+
+test("typed config drives slots: 30-min office hours only on Friday 2–4pm", () => {
+  const type = { label: "Office Hours", durationMin: 30, stepMinutes: 30,
+    window: { days: ["fri"], start: "14:00", end: "16:00" }, dailyCap: 4 };
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, type);
+  const slots = getOpenSlots({ config: cfg, token: null, busy: [], bookedByDay: {}, now: NOW });
+  const fri = startsOn(slots, 10); // Fri Jul 10
+  assert.equal(fri.length, 4, "14:00 14:30 15:00 15:30");
+  assert.equal(fri[0], mtnIso(10, 14, 0));
+  assert.equal(fri[fri.length - 1], mtnIso(10, 15, 30));
+  assert.equal(startsOn(slots, 7).length, 0, "no Tuesday slots for this type");
+  const capped = getOpenSlots({ config: cfg, token: null, busy: [], bookedByDay: { "2026-07-10": 4 }, now: NOW });
+  assert.equal(startsOn(capped, 10).length, 0, "type's own cap closes the day");
 });
 
 test("capCounts:any — any busy block closes the day for standard, not vip", () => {
