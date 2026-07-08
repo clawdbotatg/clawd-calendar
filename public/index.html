@@ -49,7 +49,7 @@
   .spin { color: var(--muted); padding: 32px 0; text-align: center; }
 
   /* ── picker layout: info | calendar | times ── */
-  .layout { display: grid; grid-template-columns: 260px 1fr 300px; gap: 0;
+  .layout { display: grid; grid-template-columns: 260px 1fr 340px; gap: 0;
             background: var(--card); border: 1px solid var(--line); border-radius: 0; overflow: hidden; }
   .pane { padding: 24px; min-width: 0; }
   .info { border-right: 1px solid var(--line); }
@@ -87,7 +87,7 @@
 
   /* times column */
   .timeshead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; gap: 8px; }
-  .timeshead .dl { font-weight: 700; font-size: .95rem; }
+  .timeshead .dl { font-weight: 700; font-size: .95rem; white-space: nowrap; }
   .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 0; overflow: hidden; }
   .viewtoggle button { width: auto; border-radius: 0; background: var(--card); color: var(--muted);
                        font-size: .75rem; padding: 5px 10px; font-weight: 500; }
@@ -152,6 +152,7 @@
     font-family: "Silkscreen", "Courier New", ui-monospace, monospace;
   }
   body.skin-slop h1 { font-size: 1.15rem; }
+  body.skin-slop .timeshead .dl { font-size: .78rem; } /* Silkscreen runs wide */
   body.skin-slop .info img.avatar { border: 1px solid rgba(124,77,255,.5);
     box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
   body.skin-slop input, body.skin-slop select, body.skin-slop textarea {
