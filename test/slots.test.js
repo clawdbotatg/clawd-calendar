@@ -189,3 +189,32 @@ test("capCounts:any — any busy block closes the day for standard, not vip", ()
   const vip = getOpenSlots({ config: cfg, token: { tier: "vip" }, busy, bookedByDay: {}, now: NOW });
   assert.ok(startsOn(vip, 7).length > 0);
 });
+
+// ── calendar-is-source-of-truth daily cap ─────────────────────────────────
+
+const { titledDayCounts } = require("../lib/slots");
+
+test("titledDayCounts: events named like the type spend their day", () => {
+  const events = [
+    { id: "1", summary: "SLOP.COMPUTER", start: mtnIso(8, 16) },              // exact
+    { id: "2", summary: "Prepare: SLOP.COMPUTER", start: mtnIso(8, 15, 45) }, // companion — excluded
+    { id: "3", summary: "slop.computer w/ vitalik", start: mtnIso(9, 12) },   // case-insensitive contains
+    { id: "4", summary: "Dentist", start: mtnIso(9, 9) },                     // unrelated
+    { id: "5", summary: "SLOP.COMPUTER planning", day: "2026-07-10" },        // all-day
+  ];
+  assert.deepEqual(titledDayCounts(events, "SLOP.COMPUTER", TZ),
+    { "2026-07-08": 1, "2026-07-09": 1, "2026-07-10": 1 });
+
+  // No fixed name to match / no event data → null (caller keeps db counts).
+  assert.equal(titledDayCounts(events, "Call: {name}", TZ), null);
+  assert.equal(titledDayCounts(null, "SLOP.COMPUTER", TZ), null);
+});
+
+test("titled day counts close those days for the type's cap", () => {
+  const counts = titledDayCounts(
+    [{ id: "1", summary: "An extra SLOP.COMPUTER ep", start: mtnIso(8, 16) }],
+    "SLOP.COMPUTER", TZ);
+  const slots = run({ bookedByDay: counts });
+  assert.equal(startsOn(slots, 8).length, 0, "manually-added episode closes Wed");
+  assert.ok(startsOn(slots, 9).length > 0, "Thu unaffected");
+});

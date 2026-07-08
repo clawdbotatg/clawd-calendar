@@ -45,7 +45,12 @@ env config:
   busy events, not the window edge — 8:00 stays bookable even though prep
   would be 7:45).
 - **Slot shape** — e.g. 60-min calls on 30-min start increments.
-- **Daily cap** — one tool-booked call per day; a booked day disappears.
+- **Daily cap** — one call per day; a booked day disappears. The calendar
+  is the source of truth: delete a booked event from Google Calendar and
+  its day reopens (the local booking is auto-cancelled), and for types
+  with a fixed event title (e.g. `SLOP.COMPUTER`) any calendar event with
+  that name — even one you added by hand — spends the day
+  (`Prepare: …` companion blocks don't count).
 - **Min notice / max days out.**
 - **Book-time re-check** — rules re-run for the exact slot before the event
   is created; a race loses gracefully with "slot just taken".

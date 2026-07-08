@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const { getOpenSlots, effectiveRules, applyType } = require("./lib/slots");
+const { getOpenSlots, effectiveRules, applyType, titledDayCounts } = require("./lib/slots");
 const db = require("./lib/db");
 const gcal = require("./lib/gcal");
 const { dayKey } = require("./lib/tz");
@@ -92,16 +92,46 @@ async function resolveAccess(raw, publicKey = null) {
   return { token, type, cfg: applyType(CONFIG, type) };
 }
 
+// The same event can appear in both counts (a tool booking = db row AND
+// calendar event) — take the max per day, never the sum.
+function mergeMaxCounts(a, b) {
+  const out = { ...a };
+  for (const k in b) out[k] = Math.max(out[k] || 0, b[k]);
+  return out;
+}
+
 // Slot computation shared by GET /api/slots and the book-time re-check.
+// The CALENDAR is the source of truth for "this day is spent":
+//   1. a booking whose gcal event was DELETED gets cancelled locally, so
+//      removing an episode from the calendar reopens its day;
+//   2. any calendar event NAMED like this type's event (manually added
+//      episodes included, "Prepare:" blocks excluded) counts toward the
+//      type's daily cap.
 async function computeSlots({ token, cfg }, now = Date.now()) {
   const horizonMs = (cfg.maxDaysOut + 2) * 86_400_000;
   const rules = effectiveRules(cfg, token);
-  const busy = rules.ignoreBusy ? [] : await gcal.freeBusy(
-    cfg.calendarId,
-    new Date(now).toISOString(),
-    new Date(now + horizonMs).toISOString()
-  );
-  const slots = getOpenSlots({ config: cfg, token, busy, bookedByDay: db.bookedByDay(token.typeKey || null), now });
+  const timeMin = new Date(now).toISOString();
+  const timeMax = new Date(now + horizonMs).toISOString();
+  const [busy, events] = await Promise.all([
+    rules.ignoreBusy ? [] : gcal.freeBusy(cfg.calendarId, timeMin, timeMax),
+    gcal.listEvents(cfg.calendarId, timeMin, timeMax),
+  ]);
+  if (events) {
+    const ids = new Set(events.map((e) => e.id));
+    for (const b of db.listBookings({ upcomingOnly: true })) {
+      // Only judge bookings inside the fetched window — beyond it, absence
+      // from `events` means nothing.
+      if (b.startUtc <= timeMax && b.gcalEventId && !ids.has(b.gcalEventId) && db.cancelBooking(b.id))
+        console.log(`[reconcile] "${b.guestName}" ${b.startUtc} deleted from calendar — cancelled, day freed`);
+    }
+  }
+  const titled = titledDayCounts(events, cfg.eventTitle, cfg.ownerTz);
+  const booked = db.bookedByDay(token.typeKey || null);
+  const slots = getOpenSlots({
+    config: cfg, token, busy,
+    bookedByDay: titled ? mergeMaxCounts(booked, titled) : booked,
+    now,
+  });
   return { slots, rules };
 }
 
