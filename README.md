@@ -72,6 +72,13 @@ node scripts/mint.js --list
 
 Per-token overrides (window/duration/cap) work on any tier.
 
+**No-password ("public") mode** — mint a link with `--public` and its route
+works bare: `node scripts/mint.js "walk-ins" --public --duration 30` opens
+`/` itself for booking; add `--type slop` and `/slop` opens instead. The
+public token is still a normal link (tier, overrides, use counts) — if it
+gets abused, disable it (CLI or admin page) and the password gate is back.
+A wrong password never falls back to the public token.
+
 ## Event types (different kinds of links)
 
 Beyond the default call, each **event type** is its own route

@@ -88,6 +88,10 @@
         <span><label>Custom password (blank = random)<input id="m_token" placeholder="hello-austin"></label></span>
         <span><label>Max uses (blank = unlimited)<input id="m_maxUses" type="number" min="1"></label></span>
         <span><label>Duration override, min<input id="m_duration" type="number" min="5"></label></span>
+        <span><label>Public page<select id="m_public">
+          <option value="">no — password link</option>
+          <option value="1">yes — bare / or /&lt;type&gt; needs no password</option>
+        </select></label></span>
       </div>
       <div class="formfoot"><button id="mintBtn">Mint link</button><span class="err" id="m_err"></span></div>
       <div class="minted" id="minted" hidden></div>
@@ -174,10 +178,11 @@ function renderTokens() {
   el("tokens").innerHTML = DATA.tokens.length ? DATA.tokens.map((t) => {
     const uses = t.maxUses != null ? `${t.uses}/${t.maxUses}` : `${t.uses}`;
     const bits = [t.typeKey ? typeLabel(t.typeKey) : null, t.durationMin ? `${t.durationMin}min` : null,
-      windowBits(t.windowOverride), `uses: ${uses}`].filter(Boolean).join(" · ");
+      windowBits(t.windowOverride), `uses: ${uses}`,
+      t.isPublic ? `public — no password at ${DATA.baseUrl}/${t.typeKey ? esc(t.typeKey) : ""}` : null].filter(Boolean).join(" · ");
     return `
     <div class="row${t.disabled ? " off" : ""}">
-      <span class="grow"><b>${esc(t.label)}</b> <span class="badge ${t.tier}">${t.tier}</span>
+      <span class="grow"><b>${esc(t.label)}</b> <span class="badge ${t.tier}">${t.tier}</span>${t.isPublic ? ` <span class="badge">🌐 public</span>` : ""}
         <div class="meta">${esc(bits)}</div>
         <div class="mono meta">${esc(t.link)}</div></span>
       <button class="ghost" onclick="copy(${esc(JSON.stringify(t.link))})">copy link</button>
@@ -242,13 +247,14 @@ el("mintBtn").onclick = async () => {
       label: el("m_label").value, tier: el("m_tier").value, typeKey: el("m_type").value,
       token: el("m_token").value.trim() || null,
       maxUses: el("m_maxUses").value || null, durationMin: el("m_duration").value || null,
+      isPublic: el("m_public").value || null,
     });
     const box = el("minted");
     box.hidden = false;
     box.innerHTML = `minted — password <b class="mono">${esc(d.token)}</b><br>
       <a href="${esc(d.link)}" target="_blank" rel="noopener" class="mono">${esc(d.link)}</a>
       <button class="ghost" onclick="copy(${esc(JSON.stringify(d.link))})">copy</button>`;
-    el("m_label").value = el("m_token").value = el("m_maxUses").value = el("m_duration").value = "";
+    el("m_label").value = el("m_token").value = el("m_maxUses").value = el("m_duration").value = el("m_public").value = "";
     refresh();
   } catch (e) { el("m_err").textContent = e.message; }
 };

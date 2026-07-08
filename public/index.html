@@ -156,7 +156,7 @@
         <h1 id="title"></h1>
         <div class="host" id="subtitle"></div>
         <div class="meta">🕐 <span id="durLabel"></span></div>
-        <div class="meta">📹 Google Meet — link arrives with the invite</div>
+        <div class="meta" id="meetMeta">📹 Google Meet — link arrives with the invite</div>
         <div class="desc" id="desc"></div>
       </aside>
 
@@ -225,9 +225,13 @@
 
   // /<typeKey>/<password> — "a" is the default event type; others style
   // and rule the page differently (server tells us via /api/slots).
+  // A bare /<typeKey> (no password) is the type's public page — the server
+  // resolves its public token, same as / does for the default type.
   const m = location.pathname.match(/^\/([A-Za-z0-9_-]+)\/([^/]+)$/);
-  const pathType = m ? m[1] : null;
+  const bare = m ? null : location.pathname.match(/^\/([A-Za-z0-9_-]+)\/?$/);
+  const pathType = m ? m[1] : bare ? bare[1] : null;
   const token = m ? decodeURIComponent(m[2]) : null;
+  const pubType = !token && pathType && pathType !== "a" ? pathType : "";
   let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let data = null, selected = null;
   let byDay = new Map();          // dayKey → { label, slots }
@@ -448,7 +452,7 @@
         `<button id="connectBtn">📅 Connect your calendar</button>` +
         `<span style="font-size:.78rem">(only free/busy — we never see event details, nothing is stored)</span>`;
       bar.querySelector("#connectBtn").onclick = () => {
-        location.href = `/oauth/guest/start?token=${encodeURIComponent(token || "")}`;
+        location.href = `/oauth/guest/start?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
       };
     }
   }
@@ -485,6 +489,7 @@
     $("subtitle").textContent = data.pageSubtitle || "";
     $("subtitle").classList.toggle("hidden", !data.pageSubtitle);
     $("durLabel").textContent = `${data.durationMin} min`;
+    $("meetMeta").classList.toggle("hidden", data.meet === false);
     $("desc").textContent = data.pageDescription || "";
     if (data.avatarUrl) { $("avatar").src = data.avatarUrl; $("avatar").classList.remove("hidden"); }
     if (data.pickAnything) {
@@ -519,7 +524,7 @@
     try {
       const r = await fetch("/api/book", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token || "", startUtc: selected.startUtc, name, email }),
+        body: JSON.stringify({ token: token || "", type: pubType, startUtc: selected.startUtc, name, email }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -541,7 +546,7 @@
 
   // ---- boot ----
   async function load() {
-    const r = await fetch(`/api/slots?token=${encodeURIComponent(token || "")}`);
+    const r = await fetch(`/api/slots?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`);
     if (!r.ok) throw Object.assign(new Error("bad token"), { status: r.status });
     data = await r.json();
   }

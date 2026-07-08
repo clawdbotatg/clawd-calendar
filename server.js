@@ -60,20 +60,32 @@ function rateLimit(key, max, windowMs) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function lookupToken(raw) {
-  let t = typeof raw === "string" ? raw.trim() : "";
-  // Bare visit with no password → the configured public token ("shields
-  // down" mode). A WRONG password never falls back.
-  if (!t && CONFIG.publicToken) t = CONFIG.publicToken;
-  const row = t && t.length <= 128 ? db.getToken(t) : null;
+// Public-route key from client input: only sane type keys pass ("a"/empty =
+// the default type → null).
+const pubKey = (v) =>
+  typeof v === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(v) && v !== "a" ? v : null;
+
+async function lookupToken(raw, publicKey = null) {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  // Bare visit with no password → the route's public token ("shields down"
+  // mode): a token minted --public for that event type (publicKey null =
+  // the default type, which also honors env CAL_PUBLIC_TOKEN). A WRONG
+  // password never falls back.
+  if (!t) {
+    const pub = db.getPublicToken(publicKey) ||
+      (!publicKey && CONFIG.publicToken ? db.getToken(CONFIG.publicToken) : null);
+    if (!pub) await sleep(300);
+    return pub;
+  }
+  const row = t.length <= 128 ? db.getToken(t) : null;
   if (!row) await sleep(300); // flat cost on bad guesses
   return row;
 }
 
 // Token → its event type → the config as that type sees it. A token minted
 // for a type whose type row is gone/disabled is a dead link.
-async function resolveAccess(raw) {
-  const token = await lookupToken(raw);
+async function resolveAccess(raw, publicKey = null) {
+  const token = await lookupToken(raw, publicKey);
   if (!token) return null;
   const type = token.typeKey ? db.getType(token.typeKey) : null;
   if (token.typeKey && !type) { await sleep(300); return null; }
@@ -96,7 +108,7 @@ async function computeSlots({ token, cfg }, now = Date.now()) {
 // ---------- routes ----------
 
 async function handleSlots(req, res, url) {
-  const access = await resolveAccess(url.searchParams.get("token"));
+  const access = await resolveAccess(url.searchParams.get("token"), pubKey(url.searchParams.get("type")));
   if (!access) return json(res, 404, { error: "unknown link" });
   const { token, type, cfg } = access;
   const { slots, rules } = await computeSlots(access);
@@ -114,6 +126,7 @@ async function handleSlots(req, res, url) {
     label: token.label,
     durationMin: rules.durationMin,
     stepMinutes: cfg.slotStepMinutes || rules.durationMin,
+    meet: !!cfg.addMeetLink,
     pickAnything: !!rules.ignoreBusy,
     maxDaysOut: cfg.maxDaysOut,
     overlay: gcal.FAKE || !!gcal.webCreds(), // guest calendar-connect available?
@@ -132,7 +145,7 @@ async function handleBook(req, res) {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad json" }); }
 
-  const access = await resolveAccess(body.token);
+  const access = await resolveAccess(body.token, pubKey(body.type));
   if (!access) return json(res, 404, { error: "unknown link" });
   const { token, type, cfg } = access;
 
@@ -201,11 +214,12 @@ const guestRedirectUri = () => `${CONFIG.baseUrl.replace(/\/$/, "")}/oauth/callb
 
 async function handleGuestStart(req, res, url) {
   const raw = url.searchParams.get("token");
-  const token = await lookupToken(raw);
+  const pk = pubKey(url.searchParams.get("type"));
+  const token = await lookupToken(raw, pk);
   if (!token) return json(res, 404, { error: "unknown link" });
   // Public (no-password) visitors round-trip a sentinel so the callback
-  // sends them back to "/" instead of exposing the token in the URL.
-  const state = raw ? token.token : "@public";
+  // sends them back to "/" (or "/<type>") instead of exposing the token.
+  const state = raw ? token.token : pk ? `@public:${pk}` : "@public";
   const authUrl = gcal.FAKE
     ? `/oauth/callback?code=fake&state=${encodeURIComponent(state)}`
     : gcal.guestAuthUrl(guestRedirectUri(), state);
@@ -217,10 +231,12 @@ async function handleGuestStart(req, res, url) {
 async function handleGuestCallback(req, res, url) {
   const state = url.searchParams.get("state") || "";
   const code = url.searchParams.get("code");
-  const isPublic = state === "@public";
-  const token = await lookupToken(isPublic ? "" : state);
+  const pm = state.match(/^@public(?::([A-Za-z0-9_-]{1,32}))?$/);
+  const isPublic = !!pm;
+  const pk = pm ? pubKey(pm[1] || "") : null;
+  const token = await lookupToken(isPublic ? "" : state, pk);
   if (!token) return json(res, 404, { error: "unknown link" });
-  const back = isPublic ? "/" : `/${encodeURIComponent(token.typeKey || "a")}/${encodeURIComponent(token.token)}`;
+  const back = isPublic ? (pk ? `/${pk}` : "/") : `/${encodeURIComponent(token.typeKey || "a")}/${encodeURIComponent(token.token)}`;
   if (!code) { res.writeHead(302, { Location: back }); return res.end(); }
 
   // Degrade gracefully: a guest whose account has no Google Calendar (or a
@@ -372,9 +388,9 @@ async function handleAdminApi(req, res, url) {
     db.createToken({
       token, label, tier, typeKey,
       durationMin: optNum(body.durationMin), maxUses: optNum(body.maxUses),
-      windowOverride: w.window,
+      windowOverride: w.window, isPublic: !!+(body.isPublic || 0),
     });
-    console.log(`[admin] minted [${tier}] "${label}"${typeKey ? ` (type: ${typeKey})` : ""}`);
+    console.log(`[admin] minted [${tier}] "${label}"${typeKey ? ` (type: ${typeKey})` : ""}${+(body.isPublic || 0) ? " (public)" : ""}`);
     return json(res, 200, { ok: true, token, link: link({ typeKey, token }) });
   }
 
@@ -393,7 +409,10 @@ function serveIndex(res, type = null) {
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const cfg = applyType(CONFIG, type);
   const title = cfg.pageTitle || `Book a call with ${cfg.ownerName}`;
-  const desc = cfg.pageDescription || `${cfg.slotMinutes}-minute ${type ? type.label.toLowerCase() : "call"} — pick a time that works for you.`;
+  // Duration in the unfurl card follows the route's public token override
+  // (e.g. walk-ins on / get 30-min calls while password links stay 60).
+  const pubTok = db.getPublicToken(type ? type.key : null);
+  const desc = cfg.pageDescription || `${(pubTok && pubTok.durationMin) || cfg.slotMinutes}-minute ${type ? type.label.toLowerCase() : "call"} — pick a time that works for you.`;
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
     .replaceAll("__OG_TITLE__", esc(title))
     .replaceAll("__OG_DESC__", esc(desc))
@@ -441,6 +460,14 @@ const server = http.createServer(async (req, res) => {
     if (page) {
       if (page[1] === "a") return serveIndex(res);
       const type = db.getType(page[1]);
+      if (type) return serveIndex(res, type);
+    }
+    // Bare type route (/<key>, no password) — the type's public page; the
+    // client asks the API for its public token, gate if there isn't one.
+    const bare = url.pathname.match(/^\/([A-Za-z0-9_-]{1,32})\/?$/);
+    if (bare) {
+      if (bare[1] === "a") return serveIndex(res);
+      const type = db.getType(bare[1]);
       if (type) return serveIndex(res, type);
     }
     return serveStatic(res, url.pathname.slice(1));

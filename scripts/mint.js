@@ -7,6 +7,7 @@
 //   node scripts/mint.js "surprise guest" --tier override --max-uses 1
 //   node scripts/mint.js "podcast" --duration 90 --days sat,sun --start 09:00 --end 12:00
 //   node scripts/mint.js "hallway" --type q          (link for an event type — see scripts/types.js)
+//   node scripts/mint.js "walk-ins" --public         (bare / — or /<type> with --type — books with NO password)
 //   node scripts/mint.js --list
 //
 // Tiers: standard (normal rules) · vip (any day I'm free, no daily cap)
@@ -25,7 +26,7 @@ if (has("list")) {
   const config = require("../lib/config");
   for (const t of db.listTokens()) {
     const uses = t.maxUses != null ? `${t.uses}/${t.maxUses}` : `${t.uses}`;
-    console.log(`${t.disabled ? "✗" : "✓"} [${t.tier.padEnd(8)}] ${t.label.padEnd(20)} uses:${uses.padEnd(6)} ${config.baseUrl}/${encodeURIComponent(t.typeKey || "a")}/${encodeURIComponent(t.token)}`);
+    console.log(`${t.disabled ? "✗" : "✓"} [${t.tier.padEnd(8)}] ${t.label.padEnd(20)} uses:${uses.padEnd(6)} ${config.baseUrl}/${encodeURIComponent(t.typeKey || "a")}/${encodeURIComponent(t.token)}${t.isPublic ? "  🌐 public" : ""}`);
   }
   process.exit(0);
 }
@@ -35,7 +36,7 @@ for (let i = 0; i < argv.length; i++) {
   if (argv[i].startsWith("--")) { if (argv[i] !== "--list") i++; continue; } // skip flag + its value
   label = argv[i]; break;
 }
-if (!label) { console.error('usage: node scripts/mint.js "<label>" [--type <event type key>] [--tier standard|vip|override] [--token <password>] [--duration <min>] [--max-uses <n>] [--days mon,tue] [--start HH:MM] [--end HH:MM]'); process.exit(1); }
+if (!label) { console.error('usage: node scripts/mint.js "<label>" [--type <event type key>] [--tier standard|vip|override] [--token <password>] [--duration <min>] [--max-uses <n>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--public]'); process.exit(1); }
 
 const tier = flag("tier") || "standard";
 if (!["standard", "vip", "override"].includes(tier)) { console.error(`bad tier "${tier}"`); process.exit(1); }
@@ -59,9 +60,11 @@ db.createToken({
   durationMin: flag("duration") ? +flag("duration") : null,
   maxUses: flag("max-uses") ? +flag("max-uses") : null,
   windowOverride,
+  isPublic: has("public"),
 });
 
 const config = require("../lib/config");
-console.log(`minted [${tier}] "${label}"${typeKey ? ` (type: ${typeKey})` : ""}`);
+console.log(`minted [${tier}] "${label}"${typeKey ? ` (type: ${typeKey})` : ""}${has("public") ? " (public)" : ""}`);
 console.log(`  password: ${token}`);
 console.log(`  link:     ${config.baseUrl}/${encodeURIComponent(typeKey || "a")}/${encodeURIComponent(token)}`);
+if (has("public")) console.log(`  public:   ${config.baseUrl}/${typeKey ? encodeURIComponent(typeKey) : ""} — no password needed (disable this link to re-arm the gate)`);
