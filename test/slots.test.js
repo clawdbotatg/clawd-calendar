@@ -201,9 +201,13 @@ test("titledDayCounts: events named like the type spend their day", () => {
     { id: "3", summary: "slop.computer w/ vitalik", start: mtnIso(9, 12) },   // case-insensitive contains
     { id: "4", summary: "Dentist", start: mtnIso(9, 9) },                     // unrelated
     { id: "5", summary: "SLOP.COMPUTER planning", day: "2026-07-10" },        // all-day
+    { id: "6", summary: "Podcast ep 12",                                      // match in DESCRIPTION only
+      description: "recording — slop.computer with a guest", start: mtnIso(13, 10) },
+    { id: "7", summary: "Prepare: episode",                                   // prep excluded even via desc
+      description: '15-min prep before "SLOP.COMPUTER"', start: mtnIso(13, 9, 45) },
   ];
   assert.deepEqual(titledDayCounts(events, "SLOP.COMPUTER", TZ),
-    { "2026-07-08": 1, "2026-07-09": 1, "2026-07-10": 1 });
+    { "2026-07-08": 1, "2026-07-09": 1, "2026-07-10": 1, "2026-07-13": 1 });
 
   // No fixed name to match / no event data → null (caller keeps db counts).
   assert.equal(titledDayCounts(events, "Call: {name}", TZ), null);

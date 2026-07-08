@@ -49,7 +49,8 @@ env config:
   is the source of truth: delete a booked event from Google Calendar and
   its day reopens (the local booking is auto-cancelled), and for types
   with a fixed event title (e.g. `SLOP.COMPUTER`) any calendar event with
-  that name — even one you added by hand — spends the day
+  that name in its title *or description* — even one you added by hand —
+  spends the day
   (`Prepare: …` companion blocks don't count).
 - **Min notice / max days out.**
 - **Book-time re-check** — rules re-run for the exact slot before the event
