@@ -166,12 +166,14 @@
             border: 1px solid color-mix(in srgb, var(--muted) 40%, var(--line)); border-radius: 0;
             font-size: .68rem; color: var(--muted); padding: 1px 7px; overflow: hidden; }
   .tlSlot { position: absolute; left: 42px; width: calc(55% - 48px); border-radius: 0; cursor: pointer;
-            font-size: .75rem; display: flex; align-items: center; padding: 0 9px; font-variant-numeric: tabular-nums;
-            background: color-mix(in srgb, var(--ok) 10%, var(--bg));
-            border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--line)); color: var(--ink); }
+            font-size: .75rem; display: flex; align-items: flex-start; padding: 3px 9px; overflow: hidden;
+            white-space: nowrap; font-variant-numeric: tabular-nums;
+            background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+            border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--ink); }
   .tlSlot:hover { border-color: var(--accent); color: var(--accent); z-index: 3; }
   .tlSlot.conflict { background: color-mix(in srgb, #dc2626 9%, var(--bg));
-                     border-color: color-mix(in srgb, #dc2626 50%, var(--line)); opacity: .75; }
+                     border-color: color-mix(in srgb, #dc2626 50%, var(--line));
+                     color: color-mix(in srgb, var(--ink) 55%, var(--bg)); }
   .tlDayLabel { font-size: .66rem; color: var(--muted); position: absolute; right: 8px; top: 4px; }
 </style>
 </head>
@@ -459,12 +461,18 @@
         tl.appendChild(el);
       }
     }
-    const step = data.stepMinutes || 30;
-    for (const s of day.slots) {
+    // Chips are as tall as the real booking. Overlapping slots (60-min calls
+    // on 30-min starts) are drawn earliest→latest so each later chip paints
+    // over the tail of the previous one — every start time stays visible as a
+    // staggered stack, and hover raises a chip to show its full extent.
+    const placed = day.slots
+      .map((s) => ({ s, start: localMin(s.startUtc), end: localMin(s.endUtc) || 1440 }))
+      .sort((a, b) => a.start - b.start);
+    for (const { s, start, end } of placed) {
       const chip = document.createElement("div"); chip.className = "tlSlot";
       if (g && guestConflict(s)) chip.classList.add("conflict");
-      chip.style.top = `${(localMin(s.startUtc) - lo) * PX + 1}px`;
-      chip.style.height = `${step * PX - 4}px`;
+      chip.style.top = `${(start - lo) * PX + 1}px`;
+      chip.style.height = `${(end - start) * PX - 4}px`;
       chip.textContent = fmtTime(s.startUtc, guestTz);
       chip.title = `${fmtTime(s.startUtc, guestTz)} – ${fmtTime(s.endUtc, guestTz)}`;
       chip.onclick = () => { selected = s; openForm(); };
