@@ -448,9 +448,17 @@ function serveIndex(res, type = null) {
   // (e.g. walk-ins on / get 30-min calls while password links stay 60).
   const pubTok = db.getPublicToken(type ? type.key : null);
   const desc = cfg.pageDescription || `${(pubTok && pubTok.durationMin) || cfg.slotMinutes}-minute ${type ? type.label.toLowerCase() : "call"} — pick a time that works for you.`;
+  const base = CONFIG.baseUrl.replace(/\/$/, "");
+  // Per-type unfurl card: og-<key>.png in the assets overlay (or public/)
+  // wins; missing file falls back to the shared og.png.
+  const ogFile = type && [ASSETS_DIR, PUBLIC_DIR].some((d) => fs.existsSync(path.join(d, `og-${type.key}.png`)))
+    ? `og-${type.key}.png` : "og.png";
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
     .replaceAll("__OG_TITLE__", esc(title))
     .replaceAll("__OG_DESC__", esc(desc))
+    .replaceAll("__OG_IMAGE__", `${base}/${ogFile}`)
+    .replaceAll("__OG_URL__", type ? `${base}/${esc(type.key)}` : `${base}/`)
+    .replaceAll("__THEME_COLOR__", cfg.accentColor ? esc(cfg.accentColor) : "#81d555")
     // Skin class stamped server-side so the themed background paints
     // before the API round-trip (skin names are validated slugs).
     .replaceAll("__BODY_CLASS__", type && type.skin ? `skin-${esc(type.skin)}` : "")
