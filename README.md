@@ -96,6 +96,9 @@ description text (`--event-desc`), a location (`--location`), Meet link
 on/off (`--meet`/`--no-meet`), and a **prep block** (`--prep 15` — an
 owner-only "Prepare: …" event created on the calendar right before each
 booking; the slot search keeps that gap clear of busy events).
+For a fully custom look a type can carry a per-type avatar (`--avatar`),
+an ASCII banner rendered above the picker (`--ascii-file`), and a named
+**skin** (`--skin`) — a CSS theme in `index.html` (e.g. `slop`).
 Anything unset inherits the env config. Resolution chain:
 env config → event type → token (tiers still work inside any type).
 

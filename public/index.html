@@ -116,6 +116,47 @@
   .warnbadge { background: color-mix(in srgb, #dc2626 12%, var(--card)); border: 1px solid #dc2626;
                border-radius: 0; padding: 8px 12px; margin: 0 0 12px; font-size: .9rem; }
 
+  /* ── ASCII hero banner (per-type) ── */
+  .hero { display: block; width: max-content; max-width: 100%; margin: 0 auto 20px; overflow: hidden;
+          font-family: ui-monospace, Menlo, Consolas, monospace; font-size: clamp(4.5px, 1.45vw, 10.5px);
+          line-height: 1.18; color: var(--accent);
+          text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 75%, transparent),
+                       0 0 22px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+  /* ── skin: slop (slop.computer) ── */
+  /* Recreates the site's slop-desktop-bg: radial base #14091e→#06030d→#000,
+     a purple glow, and the 6px purple/cyan dot grid — plus its glass panels
+     and Silkscreen display font (loaded at runtime when the skin is on). */
+  body.skin-slop {
+    --bg: #06030d; --card: #0a0f24; --ink: #e8e6ff; --muted: #8f8ab8;
+    --line: #2a2450; --ok: #bcff5b;
+    background-color: #06030d;
+    background-image:
+      radial-gradient(ellipse 70% 50% at 50% 30%, rgba(124,77,255,.14), transparent 70%),
+      radial-gradient(rgba(124,77,255,.32) .75px, transparent .95px),
+      radial-gradient(rgba(63,207,255,.22) .75px, transparent .95px),
+      radial-gradient(circle at 50% 30%, #14091e 0%, #06030d 70%, #000 100%);
+    background-size: 100% 100%, 6px 6px, 6px 6px, 100% 100%;
+    background-position: 0 0, 0 0, 3px 3px, 0 0;
+    background-attachment: fixed;
+  }
+  body.skin-slop .card, body.skin-slop .layout {
+    background: linear-gradient(180deg, rgba(10,15,36,.95), rgba(6,8,24,.92));
+    border-color: rgba(124,77,255,.35);
+  }
+  body.skin-slop .info, body.skin-slop .times { border-color: rgba(124,77,255,.35); }
+  @media (max-width: 900px) { body.skin-slop .info { border-color: rgba(124,77,255,.35); } }
+  body.skin-slop h1, body.skin-slop h2, body.skin-slop .calhead .mon,
+  body.skin-slop button, body.skin-slop .tslot, body.skin-slop .calgrid .cell,
+  body.skin-slop .timeshead .dl {
+    font-family: "Silkscreen", "Courier New", ui-monospace, monospace;
+  }
+  body.skin-slop h1 { font-size: 1.15rem; }
+  body.skin-slop .info img.avatar { border: 1px solid rgba(124,77,255,.5);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+  body.skin-slop input, body.skin-slop select, body.skin-slop textarea {
+    background: #060818; border-color: rgba(124,77,255,.4); }
+
   /* day timeline (connected view) */
   .tl { position: relative; border: 1px solid var(--line); border-radius: 0; background: var(--bg); overflow: hidden; }
   .tlHour { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); opacity: .55; }
@@ -133,7 +174,7 @@
   .tlDayLabel { font-size: .66rem; color: var(--muted); position: absolute; right: 8px; top: 4px; }
 </style>
 </head>
-<body>
+<body class="__BODY_CLASS__">
 <div class="wrap" id="wrapEl">
 
   <!-- password gate -->
@@ -149,6 +190,7 @@
 
   <!-- picker: info | month calendar | times -->
   <div id="picker" class="hidden">
+    <pre id="heroAscii" class="hero hidden"></pre>
     <div id="goldBanner" class="banner hidden"></div>
     <div class="layout">
       <aside class="pane info">
@@ -476,6 +518,19 @@
     document.documentElement.style.setProperty("--accent-ink", 0.299 * r + 0.587 * g + 0.114 * b > 145 ? "#101010" : "#ffffff");
   }
 
+  // Named skin: body class (may already be stamped server-side) + any
+  // skin-specific webfont, loaded only when the skin is active.
+  function applySkin(skin) {
+    if (!skin || !/^[a-z0-9-]{1,24}$/.test(skin)) return;
+    document.body.classList.add(`skin-${skin}`);
+    if (skin === "slop" && !document.getElementById("skinFont")) {
+      const l = document.createElement("link");
+      l.id = "skinFont"; l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=Silkscreen&display=swap";
+      document.head.appendChild(l);
+    }
+  }
+
   function openPicker() {
     show("picker");
     // Landed via the gate or a mismatched prefix? Settle on the token's
@@ -483,6 +538,11 @@
     if (token && data.typeKey && pathType !== data.typeKey)
       history.replaceState(null, "", `/${data.typeKey}/${encodeURIComponent(token)}`);
     applyAccent(data.accentColor);
+    applySkin(data.skin);
+    if (data.heroAscii) {
+      $("heroAscii").textContent = data.heroAscii;
+      $("heroAscii").classList.remove("hidden");
+    }
     const title = data.pageTitle || `Book a call with ${data.ownerName}`;
     document.title = title;
     $("title").textContent = title;

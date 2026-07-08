@@ -52,7 +52,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const key = flag("key");
 if (!label || !key) {
-  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"] [--event-desc <invite text>] [--location <URL or place>] [--prep <min before, owner-only block>] [--meet|--no-meet]');
+  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"] [--event-desc <invite text>] [--location <URL or place>] [--prep <min before, owner-only block>] [--meet|--no-meet] [--avatar </img.png>] [--skin <name>] [--ascii-file <path — banner shown above the picker>]');
   process.exit(1);
 }
 if (!/^[a-z0-9_-]{1,32}$/.test(key)) { console.error(`bad key "${key}" — lowercase letters/digits/-/_ only`); process.exit(1); }
@@ -83,6 +83,9 @@ db.createType({
   pageSubtitle: flag("subtitle"),
   pageDescription: flag("desc"),
   accentColor: accent,
+  avatarUrl: flag("avatar"),
+  skin: flag("skin"),
+  heroAscii: flag("ascii-file") ? require("node:fs").readFileSync(flag("ascii-file"), "utf8").replace(/\n+$/, "") : null,
 });
 
 console.log(`created event type [${key}] "${label}"`);

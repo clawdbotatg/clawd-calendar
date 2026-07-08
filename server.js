@@ -148,6 +148,8 @@ async function handleSlots(req, res, url) {
     typeKey: token.typeKey || "a",
     typeLabel: type ? type.label : null,
     accentColor: cfg.accentColor || null,
+    skin: cfg.skin || null,
+    heroAscii: cfg.heroAscii || null,
     pageTitle: cfg.pageTitle,
     pageSubtitle: cfg.pageSubtitle,
     pageDescription: cfg.pageDescription,
@@ -392,6 +394,9 @@ async function handleAdminApi(req, res, url) {
       pageSubtitle: body.pageSubtitle ? String(body.pageSubtitle).slice(0, 200) : null,
       pageDescription: body.pageDescription ? String(body.pageDescription).slice(0, 2000) : null,
       accentColor: accent,
+      avatarUrl: body.avatarUrl ? String(body.avatarUrl).slice(0, 300) : null,
+      skin: body.skin && /^[a-z0-9-]{1,24}$/.test(String(body.skin).trim()) ? String(body.skin).trim() : null,
+      heroAscii: body.heroAscii ? String(body.heroAscii).slice(0, 8000) : null,
     });
     console.log(`[admin] created type "${key}"`);
     return json(res, 200, { ok: true, key });
@@ -446,6 +451,9 @@ function serveIndex(res, type = null) {
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
     .replaceAll("__OG_TITLE__", esc(title))
     .replaceAll("__OG_DESC__", esc(desc))
+    // Skin class stamped server-side so the themed background paints
+    // before the API round-trip (skin names are validated slugs).
+    .replaceAll("__BODY_CLASS__", type && type.skin ? `skin-${esc(type.skin)}` : "")
     .replaceAll("__BASE_URL__", CONFIG.baseUrl.replace(/\/$/, ""));
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   res.end(html);
