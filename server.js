@@ -10,6 +10,7 @@ const crypto = require("node:crypto");
 const { getOpenSlots, effectiveRules, applyType, titledDayCounts } = require("./lib/slots");
 const db = require("./lib/db");
 const gcal = require("./lib/gcal");
+const notify = require("./lib/notify");
 const { dayKey } = require("./lib/tz");
 
 const CONFIG = require("./lib/config");
@@ -232,6 +233,11 @@ async function handleBook(req, res) {
       gcalEventId: ev.id, meetLink: ev.meetLink,
     });
     console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier}${token.typeKey ? `, type ${token.typeKey}` : ""})`);
+    notify.bookingNotify({
+      guestName: name, guestEmail: email, note,
+      startUtc: slot.startUtc, endUtc: slot.endUtc,
+      typeLabel: type ? type.label : null, tokenLabel: token.label, meetLink: ev.meetLink,
+    });
     return { code: 200, body: { ok: true, startUtc: slot.startUtc, endUtc: slot.endUtc, meetLink: ev.meetLink } };
   }));
   json(res, result.code, result.body);
