@@ -629,8 +629,7 @@
     const bar = $("connectBar"), foot = $("connectFoot");
     bar.classList.add("hidden");
     foot.classList.add("hidden");
-    // Manage mode has no route token for the OAuth round-trip — skip it.
-    if (!data.overlay || manageKey) return;
+    if (!data.overlay) return;
     const g = guestCal();
     const clean = (s) => String(s || "").replace(/[<>&]/g, "");
     if (g) {
@@ -645,6 +644,12 @@
       };
       foot.classList.remove("hidden");
     } else {
+      // The OAuth round-trip needs a route to come back to: the URL's token/
+      // public type, or (manage mode) the booking's public route from the
+      // server. A managed booking on a password-only route can't restart
+      // OAuth — no CTA there.
+      const mType = manageKey && data.route ? data.route.replace(/^\//, "") : null;
+      if (manageKey && mType == null) return;
       bar.classList.remove("hidden");
       const failed = sessionStorage.getItem("cal_guest_err");
       sessionStorage.removeItem("cal_guest_err");
@@ -654,7 +659,9 @@
           : `See which times work for both of us before you pick — and skip typing your name and email. We only read free/busy, never event details, and nothing is stored.`}</div></div>` +
         `<button id="connectBtn">Connect Google</button>`;
       bar.querySelector("#connectBtn").onclick = () => {
-        location.href = `/oauth/guest/start?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
+        location.href = manageKey
+          ? `/oauth/guest/start?token=&type=${encodeURIComponent(mType)}`
+          : `/oauth/guest/start?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
       };
     }
   }
