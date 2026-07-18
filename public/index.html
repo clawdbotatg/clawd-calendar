@@ -20,10 +20,11 @@
   :root {
     --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b;
     --line: #e4e4e0; --accent: #81d555; --accent-ink: #0e1a08; --ok: #16a34a;
+    --mine: #d99a06; /* gold: the guest's own booked slot */
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #101012; --card: #1a1a1e; --ink: #ececec; --muted: #9a9aa2;
-            --line: #2a2a30; --accent: #81d555; --ok: #22c55e; }
+            --line: #2a2a30; --accent: #81d555; --ok: #22c55e; --mine: #f0b429; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -83,6 +84,12 @@
   .calgrid .cell.open:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .calgrid .cell.sel { background: var(--accent); color: var(--accent-ink); }
   .calgrid .cell.today { text-decoration: underline; }
+  /* the guest's own booked day — gold ring + tint, clickable even when the
+     day has no open slots */
+  .calgrid .cell.mine { box-shadow: inset 0 0 0 2px var(--mine);
+                        background: color-mix(in srgb, var(--mine) 16%, transparent);
+                        color: var(--mine); font-weight: 700; cursor: pointer; }
+  .calgrid .cell.mine.sel { background: var(--mine); color: #1a1200; }
   .tzrow { margin-top: 18px; font-size: .9rem; color: var(--muted); }
   .tzrow select { margin: 6px 0 0; }
 
@@ -101,6 +108,9 @@
            margin-bottom: 8px; cursor: pointer; font-variant-numeric: tabular-nums; background: var(--card); }
   .tslot:hover { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
   .tslot.free { border-color: color-mix(in srgb, var(--ok) 60%, var(--line)); color: var(--ok); }
+  .tslot.mine { border-color: var(--mine); color: var(--mine); cursor: default;
+                background: color-mix(in srgb, var(--mine) 10%, var(--card)); }
+  .tslot.mine:hover { background: color-mix(in srgb, var(--mine) 10%, var(--card)); }
   .tslot.conflict { border-color: color-mix(in srgb, #dc2626 55%, var(--line)); color: #dc2626; opacity: .65; }
   .tslot.conflict:hover { opacity: 1; }
   .noday { color: var(--muted); font-size: .9rem; text-align: center; padding: 24px 0; }
@@ -180,6 +190,10 @@
   .tlSlot.conflict { background: color-mix(in srgb, #dc2626 9%, var(--bg));
                      border-color: color-mix(in srgb, #dc2626 50%, var(--line));
                      color: color-mix(in srgb, var(--ink) 55%, var(--bg)); }
+  .tlSlot.mine { background: color-mix(in srgb, var(--mine) 16%, var(--bg));
+                 border-color: var(--mine); color: var(--mine); font-weight: 700;
+                 cursor: default; z-index: 2; }
+  .tlSlot.mine:hover { border-color: var(--mine); color: var(--mine); }
   .tlDayLabel { font-size: .66rem; color: var(--muted); position: absolute; right: 8px; top: 4px; }
 </style>
 </head>
@@ -262,7 +276,7 @@
       <h1 id="doneTitle">Booked!</h1>
       <p id="doneWhen" class="sub"></p>
       <p id="doneNote">A Google Calendar invite is on its way to your email.</p>
-      <p id="meetP" class="hidden"><a id="meetA" href="#" target="_blank" rel="noopener">Google Meet link</a></p>
+      <p id="doneCount" class="sub hidden"></p>
     </div>
   </div>
 
@@ -291,6 +305,7 @@
   const pubType = !token && pathType && pathType !== "a" ? pathType : "";
   let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let data = null, selected = null;
+  let myBooked = null;            // the guest's verified upcoming booking (gold marks)
   let byDay = new Map();          // dayKey → { label, slots }
   let selectedDay = null;         // dayKey
   let calCursor = null;           // { y, m } month shown
@@ -411,6 +426,10 @@
     }
   }
 
+  // The guest's own booking, if it lands on this day (guest tz).
+  const mineOnDay = (key) =>
+    myBooked && key && dayKeyOf(myBooked.startUtc) === key ? myBooked : null;
+
   // ---- month calendar ----
   const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   function monthKeys() { return [...byDay.keys()]; }
@@ -440,8 +459,10 @@
       cell.className = "cell";
       cell.textContent = d;
       if (key === todayKey) cell.classList.add("today");
-      if (byDay.has(key)) {
-        cell.classList.add("open");
+      const clickable = byDay.has(key) || !!mineOnDay(key);
+      if (byDay.has(key)) cell.classList.add("open");
+      if (mineOnDay(key)) cell.classList.add("mine"); // gold: our meeting
+      if (clickable) {
         if (key === selectedDay) cell.classList.add("sel");
         cell.onclick = () => { selectedDay = key; renderCalendar(); renderTimes(); };
       }
@@ -470,32 +491,48 @@
     const pane = $("dayTimes");
     pane.innerHTML = "";
     const day = selectedDay && byDay.get(selectedDay);
-    $("dayLabel").textContent = day ? day.label : "";
-    if (!day) {
+    const mine = selectedDay && mineOnDay(selectedDay);
+    $("dayLabel").textContent = day ? day.label : mine ? fmtDay(mine.startUtc, guestTz) : "";
+    if (!day && !mine) {
       const el = document.createElement("div"); el.className = "noday";
       el.textContent = "No open times right now — check back soon.";
       pane.appendChild(el);
       return;
     }
-    pane.appendChild(viewMode === "day" ? buildTimeline(selectedDay, day) : buildList(day));
+    const d = day || { slots: [] };
+    pane.appendChild(viewMode === "day" ? buildTimeline(selectedDay, d, mine) : buildList(d, mine));
   }
 
-  function buildList(day) {
+  const mineChip = (mine) => {
+    const b = document.createElement("div"); b.className = "tslot mine";
+    b.textContent = `★ Your call — ${fmtTime(mine.startUtc, guestTz)}`;
+    b.title = `${fmtTime(mine.startUtc, guestTz)} – ${fmtTime(mine.endUtc, guestTz)}`;
+    return b;
+  };
+
+  function buildList(day, mine) {
     const box = document.createElement("div");
     const connected = !!guestCal();
+    const mineStart = mine ? Date.parse(mine.startUtc) : null;
+    let minePlaced = !mine;
     for (const s of day.slots) {
+      if (!minePlaced && Date.parse(s.startUtc) >= mineStart) {
+        box.appendChild(mineChip(mine));
+        minePlaced = true;
+      }
       const b = document.createElement("div"); b.className = "tslot";
       if (connected) b.classList.add(guestConflict(s) ? "conflict" : "free");
       b.textContent = fmtTime(s.startUtc, guestTz);
       b.onclick = () => { selected = s; openForm(); };
       box.appendChild(b);
     }
+    if (!minePlaced) box.appendChild(mineChip(mine));
     return box;
   }
 
   // Day timeline: the guest's whole day — busy blocks right, bookable chips
   // left, red where the full booking would collide.
-  function buildTimeline(key, day) {
+  function buildTimeline(key, day, mine) {
     const PX = 1.0;
     const g = guestCal();
     const busy = (g ? g.busy : []).map((b) => {
@@ -506,6 +543,7 @@
 
     const starts = day.slots.map((s) => localMin(s.startUtc));
     const ends = day.slots.map((s) => localMin(s.endUtc) || 1440);
+    if (mine) { starts.push(localMin(mine.startUtc)); ends.push(localMin(mine.endUtc) || 1440); }
     let lo = Math.min(...starts, ...(busy.length ? busy.map((b) => b.s) : [Infinity]), 8 * 60);
     let hi = Math.max(...ends, ...(busy.length ? busy.map((b) => b.e) : [0]), 18 * 60);
     lo = Math.max(0, Math.floor(lo / 60) * 60 - 30);
@@ -546,6 +584,15 @@
       chip.textContent = fmtTime(s.startUtc, guestTz);
       chip.title = `${fmtTime(s.startUtc, guestTz)} – ${fmtTime(s.endUtc, guestTz)}`;
       chip.onclick = () => { selected = s; openForm(); };
+      tl.appendChild(chip);
+    }
+    if (mine) {
+      const ms = localMin(mine.startUtc), me = localMin(mine.endUtc) || 1440;
+      const chip = document.createElement("div"); chip.className = "tlSlot mine";
+      chip.style.top = `${(ms - lo) * PX + 1}px`;
+      chip.style.height = `${(me - ms) * PX - 4}px`;
+      chip.textContent = `★ your call — ${fmtTime(mine.startUtc, guestTz)}`;
+      chip.title = `${fmtTime(mine.startUtc, guestTz)} – ${fmtTime(mine.endUtc, guestTz)}`;
       tl.appendChild(chip);
     }
     return tl;
@@ -600,6 +647,8 @@
         if (!j.reschedulable) { dropMyBooking(mine.key); continue; }
         const b = j.booking;
         saveMyBooking({ ...mine, startUtc: b.startUtc, endUtc: b.endUtc }); // may have moved
+        myBooked = { startUtc: b.startUtc, endUtc: b.endUtc };
+        renderCalendar(); renderTimes(); // gold-mark our meeting
         const bn = $("myBooking");
         bn.textContent = `👋 ${b.guestName} — you're already booked for `;
         const when = document.createElement("b");
@@ -673,6 +722,7 @@
     }
     if (manageKey) {
       const b = data.booking;
+      myBooked = { startUtc: b.startUtc, endUtc: b.endUtc }; // gold-mark current slot
       const bn = $("myBooking");
       bn.textContent = `♻️ Rescheduling ${b.guestName}'s call — currently `;
       const when = document.createElement("b");
@@ -777,8 +827,8 @@
         ? "Google Calendar is emailing you the updated invite."
         : "A Google Calendar invite is on its way to your email.";
       $("doneWhen").textContent = `${fmtDay(j.startUtc, guestTz)} · ${fmtTime(j.startUtc, guestTz)}–${fmtTime(j.endUtc, guestTz)} (${guestTz})`;
-      if (j.meetLink) { $("meetP").classList.remove("hidden"); $("meetA").href = j.meetLink; }
       show("done");
+      startDoneCountdown();
     } catch {
       $("bookBtn").disabled = false; $("bookBtn").textContent = bookLabel();
       $("formErr").textContent = "Network error — try again.";
@@ -791,8 +841,21 @@
     $("doneTitle").textContent = title;
     $("doneWhen").textContent = sub || "";
     $("doneNote").classList.add("hidden");
-    $("meetP").classList.add("hidden");
     show("done");
+  }
+
+  // After a successful book/reschedule: count down, then reload back to the
+  // picker — where the banner + gold calendar marks show the new booking.
+  function startDoneCountdown(secs = 5) {
+    const el = $("doneCount");
+    el.classList.remove("hidden");
+    let n = secs;
+    const tick = () => {
+      el.textContent = `Taking you back to the calendar in ${n}…`;
+      if (n-- <= 0) { clearInterval(iv); location.reload(); }
+    };
+    const iv = setInterval(tick, 1000);
+    tick();
   }
 
   // ---- boot ----
