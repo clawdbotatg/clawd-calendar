@@ -297,9 +297,12 @@
   // resolves its public token, same as / does for the default type.
   const m = location.pathname.match(/^\/([A-Za-z0-9_-]+)\/([^/]+)$/);
   const bare = m ? null : location.pathname.match(/^\/([A-Za-z0-9_-]+)\/?$/);
-  // /r/<manageKey> — reschedule mode: the key came from a booking's invite
-  // and resolves to exactly one booking server-side.
-  const manageKey = m && m[1] === "r" ? decodeURIComponent(m[2]) : null;
+  // /r/<manageKey> — a booking's invite link: it bootstraps the SAME unified
+  // calendar (verify key → seed localStorage → rewrite the URL to the plain
+  // route). manageKey is also set at boot when this browser's localStorage
+  // holds a verified upcoming booking for the route — the calendar then
+  // manages that booking: picking a slot reschedules it.
+  let manageKey = m && m[1] === "r" ? decodeURIComponent(m[2]) : null;
   const pathType = manageKey ? null : m ? m[1] : bare ? bare[1] : null;
   const token = manageKey ? null : m ? decodeURIComponent(m[2]) : null;
   const pubType = !token && pathType && pathType !== "a" ? pathType : "";
@@ -416,7 +419,9 @@
       if (!byDay.has(k)) byDay.set(k, { label: fmtDay(s.startUtc, guestTz), slots: [] });
       byDay.get(k).slots.push(s);
     }
-    if (!byDay.has(selectedDay)) selectedDay = byDay.keys().next().value || null;
+    // Keep the guest's booked day selected even when it has no open slots
+    // (e.g. a capped day — the blue "your call" chip still renders there).
+    if (!byDay.has(selectedDay) && !mineOnDay(selectedDay)) selectedDay = byDay.keys().next().value || null;
     if (selectedDay) {
       const [y, mo] = selectedDay.split("-").map(Number);
       calCursor = { y, m: mo };
@@ -501,6 +506,9 @@
     }
     const d = day || { slots: [] };
     pane.appendChild(viewMode === "day" ? buildTimeline(selectedDay, d, mine) : buildList(d, mine));
+    // Bring the guest's own slot into view — "here's your meeting".
+    const mc = pane.querySelector(".tslot.mine, .tlSlot.mine");
+    if (mc) pane.scrollTop += mc.getBoundingClientRect().top - pane.getBoundingClientRect().top - pane.clientHeight / 2 + mc.clientHeight / 2;
   }
 
   const mineChip = (mine) => {
@@ -516,6 +524,9 @@
     const mineStart = mine ? Date.parse(mine.startUtc) : null;
     let minePlaced = !mine;
     for (const s of day.slots) {
+      // Their current time renders ONLY as the blue chip — offering it as a
+      // pickable slot too would just invite a "that's your current time" 400.
+      if (mine && Date.parse(s.startUtc) === mineStart) continue;
       if (!minePlaced && Date.parse(s.startUtc) >= mineStart) {
         box.appendChild(mineChip(mine));
         minePlaced = true;
@@ -574,6 +585,7 @@
     // over the tail of the previous one — every start time stays visible as a
     // staggered stack, and hover raises a chip to show its full extent.
     const placed = day.slots
+      .filter((s) => !(mine && Date.parse(s.startUtc) === Date.parse(mine.startUtc)))
       .map((s) => ({ s, start: localMin(s.startUtc), end: localMin(s.endUtc) || 1440 }))
       .sort((a, b) => a.start - b.start);
     for (const { s, start, end } of placed) {
@@ -630,13 +642,14 @@
     }
   }
 
-  // "You're already booked" banner: newest upcoming localStorage entry for
-  // this event type, verified against the server (stale entries pruned —
-  // cancelled, already happened, or the calendar event was deleted).
-  async function showMineBanner() {
+  // This browser's remembered booking for the route's event type, verified
+  // against the server (stale entries pruned — cancelled, already happened,
+  // or the event was deleted). Soonest upcoming wins. Returns its manage
+  // key, flipping the whole calendar into manage mode.
+  async function findMyBookingKey(routeType) {
     const list = myBookings()
-      .filter((x) => x.typeKey === data.typeKey)
-      .sort((a, b) => (a.startUtc < b.startUtc ? 1 : -1));
+      .filter((x) => x.typeKey === routeType)
+      .sort((a, b) => (a.startUtc < b.startUtc ? -1 : 1));
     for (const mine of list) {
       if (Date.parse(mine.endUtc) < Date.now()) { dropMyBooking(mine.key); continue; }
       try {
@@ -645,22 +658,11 @@
         if (!r.ok) continue;
         const j = await r.json();
         if (!j.reschedulable) { dropMyBooking(mine.key); continue; }
-        const b = j.booking;
-        saveMyBooking({ ...mine, startUtc: b.startUtc, endUtc: b.endUtc }); // may have moved
-        myBooked = { startUtc: b.startUtc, endUtc: b.endUtc };
-        renderCalendar(); renderTimes(); // gold-mark our meeting
-        const bn = $("myBooking");
-        bn.textContent = `👋 ${b.guestName} — you're already booked for `;
-        const when = document.createElement("b");
-        when.textContent = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
-        const a = document.createElement("a");
-        a.href = `/r/${encodeURIComponent(mine.key)}`;
-        a.textContent = "Reschedule or cancel →";
-        bn.append(when, ". ", a);
-        bn.classList.remove("hidden");
-        return;
+        saveMyBooking({ ...mine, startUtc: j.booking.startUtc, endUtc: j.booking.endUtc }); // may have moved
+        return mine.key;
       } catch {}
     }
+    return null;
   }
 
   // ---- picker boot ----
@@ -722,13 +724,13 @@
     }
     if (manageKey) {
       const b = data.booking;
-      myBooked = { startUtc: b.startUtc, endUtc: b.endUtc }; // gold-mark current slot
+      myBooked = { startUtc: b.startUtc, endUtc: b.endUtc }; // blue marks
       const bn = $("myBooking");
-      bn.textContent = `♻️ Rescheduling ${b.guestName}'s call — currently `;
-      const when = document.createElement("b");
       const whenTxt = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
+      bn.textContent = `📅 ${b.guestName ? `${b.guestName} — you` : "You"} have an appointment: `;
+      const when = document.createElement("b");
       when.textContent = whenTxt;
-      bn.append(when, ". Pick a new time below to move it — or ");
+      bn.append(when, ". Select a different time to reschedule, or ");
       const cxl = document.createElement("a");
       cxl.href = "#";
       cxl.textContent = "cancel this call";
@@ -750,10 +752,29 @@
           alert("Network error — try again.");
         }
       };
-      bn.append(cxl, ".");
+      bn.append(cxl, ". ");
+      // Escape hatch for the rare "I want ANOTHER meeting" case — everything
+      // else on this page now means "move my existing one".
+      const sep = document.createElement("a");
+      sep.href = "#";
+      sep.textContent = "Booking a separate call? Start here";
+      sep.onclick = async (e) => {
+        e.preventDefault();
+        manageKey = null; // keep myBooked — the existing call stays blue
+        show("loading");
+        try { await load(); } catch { return showMsg("⚠️", "Couldn't load — try again.", ""); }
+        openPicker();
+      };
+      bn.append(sep, ".");
+      bn.classList.remove("hidden");
+      // Land the guest on their meeting: its month, its day, its hour.
+      selectedDay = dayKeyOf(b.startUtc);
+    } else if (myBooked) {
+      const bn = $("myBooking");
+      bn.textContent = `📅 Booking a separate call — your appointment on ${fmtDay(myBooked.startUtc, guestTz)} · ${fmtTime(myBooked.startUtc, guestTz)} stays as is.`;
       bn.classList.remove("hidden");
     } else {
-      showMineBanner();
+      $("myBooking").classList.add("hidden");
     }
     tzOptions();
     renderConnectBar();
@@ -867,20 +888,44 @@
     data = await r.json();
   }
   (async () => {
+    // An /r/<key> link is the bootstrap: verify → seed localStorage →
+    // rewrite the URL to the plain route. Otherwise, a verified booking in
+    // localStorage flips this same calendar into manage mode.
+    const rArrival = !!manageKey;
+    if (!rArrival) {
+      try { manageKey = await findMyBookingKey(pathType || "a"); } catch {}
+    }
     // Bare visit: try public ("shields down") mode first — if the server has
     // no public token configured it 404s and we fall back to the gate.
     try { await load(); }
     catch (e) {
-      if (manageKey) return showMsg("⚠️", "That reschedule link isn't valid.",
+      if (rArrival) return showMsg("⚠️", "That reschedule link isn't valid.",
         "Check the link in your calendar invite, or ask for a fresh one.");
-      if (!token) return gate();
-      return gate(e.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again.");
+      if (manageKey) { // stale local memory — fall back to plain booking
+        dropMyBooking(manageKey);
+        manageKey = null;
+        try { await load(); } catch (e2) {
+          if (!token) return gate();
+          return gate(e2.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again.");
+        }
+      } else {
+        if (!token) return gate();
+        return gate(e.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again.");
+      }
     }
     if (manageKey && !data.reschedulable) {
       const b = data.booking || {};
-      return showMsg("ℹ️",
+      if (rArrival) return showMsg("ℹ️",
         b.status === "booked" ? "This call already happened." : "This booking was cancelled.",
         b.startUtc ? `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)} (${guestTz})` : "");
+      dropMyBooking(manageKey); // verified moments ago but gone now — rare race
+      manageKey = null;
+      try { await load(); } catch { return gate(); }
+    }
+    if (rArrival && data.reschedulable) {
+      const b = data.booking;
+      saveMyBooking({ key: manageKey, startUtc: b.startUtc, endUtc: b.endUtc, typeKey: b.typeKey, name: b.guestName });
+      if (data.route) history.replaceState(null, "", data.route);
     }
     openPicker();
   })();

@@ -118,18 +118,21 @@ redirects itself to the right route.
 
 ## Rescheduling & cancelling
 
-Every booking mints an unguessable **manage key**; `/r/<key>` is that
-booking's self-service page. The link rides in the calendar invite's
-description ("Need to reschedule or cancel? …"), so the guest always has it
-— and the admin page has a copy-reschedule-link button per upcoming booking.
-The page greets the guest by name, shows their current time, and one click
-moves the Google Calendar event (guests get the update email; the owner's
-prep block moves too) — or cancels it outright (event + prep block deleted,
-cancellation email sent, the day freed for the cap). Their own event never
-blocks a new pick: its busy time and its daily-cap day are excluded while
-they choose. Booking in a browser also remembers the booking in
-`localStorage`, so revisiting the same calendar link shows "you're already
-booked for … — reschedule or cancel" without any key.
+One calendar does everything. Every booking mints an unguessable **manage
+key**; when the calendar knows the guest's booking (their browser's
+`localStorage` remembers it, or they arrive via the `/r/<key>` link in
+their invite — which seeds localStorage and rewrites the URL back to the
+plain route), the page flips into manage mode: it opens on their booked
+month/day with their slot marked blue, the banner reads "you have an
+appointment — select a different time to reschedule, or cancel", and
+picking any slot moves the Google Calendar event in place (guests get the
+update email; the owner's prep block moves too). Cancel deletes the event
++ prep block, emails the cancellation, and frees the day for the cap.
+Their own event never blocks a new pick: its busy time and its daily-cap
+day are excluded while they choose. A "booking a separate call" escape
+hatch covers the second-meeting case. The invite-description link and the
+admin page's copy-reschedule-link button are how guests on a fresh browser
+get back in.
 
 ## Admin page
 

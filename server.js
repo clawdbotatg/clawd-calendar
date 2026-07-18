@@ -321,10 +321,14 @@ async function handleManageGet(req, res, url, key) {
   // computeSlots reconciles against the calendar — the event may have just
   // been discovered deleted, cancelling this booking.
   b = db.getBookingByKey(key) || b;
+  // Clean URL for the unified calendar: /r/<key> arrivals rewrite to the
+  // booking's bare type route when it works without a password.
+  const pub = db.getPublicToken(b.typeKey || null);
   json(res, 200, {
     ...pagePayload(access, slots, rules),
     booking: bookingPublic(b),
     reschedulable: b.status === "booked",
+    route: pub ? (b.typeKey ? `/${b.typeKey}` : "/") : null,
   });
 }
 
