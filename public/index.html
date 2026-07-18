@@ -20,11 +20,11 @@
   :root {
     --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b;
     --line: #e4e4e0; --accent: #81d555; --accent-ink: #0e1a08; --ok: #16a34a;
-    --mine: #d99a06; /* gold: the guest's own booked slot */
+    --mine: #2563eb; /* blue: the guest's own booked slot */
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #101012; --card: #1a1a1e; --ink: #ececec; --muted: #9a9aa2;
-            --line: #2a2a30; --accent: #81d555; --ok: #22c55e; --mine: #f0b429; }
+            --line: #2a2a30; --accent: #81d555; --ok: #22c55e; --mine: #60a5fa; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -89,7 +89,7 @@
   .calgrid .cell.mine { box-shadow: inset 0 0 0 2px var(--mine);
                         background: color-mix(in srgb, var(--mine) 16%, transparent);
                         color: var(--mine); font-weight: 700; cursor: pointer; }
-  .calgrid .cell.mine.sel { background: var(--mine); color: #1a1200; }
+  .calgrid .cell.mine.sel { background: var(--mine); color: var(--bg); }
   .tzrow { margin-top: 18px; font-size: .9rem; color: var(--muted); }
   .tzrow select { margin: 6px 0 0; }
 
