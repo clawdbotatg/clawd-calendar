@@ -125,6 +125,16 @@
   .connecthero .sub2 { color: var(--muted); font-size: .85rem; }
   .connecthero button { width: auto; padding: 11px 20px; }
   .connecthero .acct { font-weight: 600; }
+
+  /* connected footer — bottom of the page once Google is linked */
+  .connectfoot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+                 margin-top: 16px; padding: 12px 16px; font-size: .85rem;
+                 color: var(--muted); background: var(--card); border: 1px solid var(--line); }
+  .connectfoot .grow2 { flex: 1; min-width: 200px; }
+  .connectfoot b { color: var(--ink); }
+  .connectfoot button { width: auto; padding: 8px 14px; font-size: .85rem;
+                        background: none; border: 1px solid var(--line); color: var(--muted); }
+  .connectfoot button:hover { color: var(--ink); border-color: var(--muted); }
   .legend { display: inline-flex; gap: 12px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 0; margin-right: 5px; }
   .banner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); border: 1px solid var(--accent);
@@ -249,6 +259,7 @@
         <div class="timescroll" id="dayTimes"></div>
       </section>
     </div>
+    <div id="connectFoot" class="connectfoot hidden"></div>
   </div>
 
   <!-- booking form -->
@@ -610,25 +621,31 @@
     return tl;
   }
 
-  // ---- connect hero (top of the picker) ----
+  // ---- connect hero (top) / connected footer (bottom) ----
+  // Disconnected: a prominent CTA above the picker. Connected: the CTA goes
+  // away and a quiet "You are connected as …" line sits at the very bottom
+  // with the disconnect button.
   function renderConnectBar() {
-    const bar = $("connectBar");
+    const bar = $("connectBar"), foot = $("connectFoot");
+    bar.classList.add("hidden");
+    foot.classList.add("hidden");
     // Manage mode has no route token for the OAuth round-trip — skip it.
-    if (!data.overlay || manageKey) return bar.classList.add("hidden");
-    bar.classList.remove("hidden");
+    if (!data.overlay || manageKey) return;
     const g = guestCal();
     const clean = (s) => String(s || "").replace(/[<>&]/g, "");
     if (g) {
-      bar.innerHTML = `<div class="grow2"><div class="big">✅ Google Calendar connected` +
-        (g.email ? ` — <span class="acct">${clean(g.email)}</span>` : "") + `</div>` +
-        `<div class="sub2"><span class="legend"><span><i style="background:var(--ok)"></i>works for both</span>` +
+      const who = g.name || g.email || "your Google account";
+      foot.innerHTML = `<span class="grow2">✅ You are connected as <b>${clean(who)}</b>` +
+        (g.name && g.email ? ` (${clean(g.email)})` : "") + `</span>` +
+        `<span class="legend"><span><i style="background:var(--ok)"></i>works for both</span>` +
         `<span><i style="background:#dc2626"></i>you're busy</span></span>` +
-        ` · your name &amp; email will be filled in for you</div></div>` +
-        `<a href="#" id="disconnect">disconnect</a>`;
-      bar.querySelector("#disconnect").onclick = (e) => {
-        e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); setViewMode("list");
+        `<button id="disconnect">Disconnect</button>`;
+      foot.querySelector("#disconnect").onclick = () => {
+        sessionStorage.removeItem("cal_guest"); renderConnectBar(); setViewMode("list");
       };
+      foot.classList.remove("hidden");
     } else {
+      bar.classList.remove("hidden");
       const failed = sessionStorage.getItem("cal_guest_err");
       sessionStorage.removeItem("cal_guest_err");
       bar.innerHTML = `<div class="grow2"><div class="big">📅 Connect your Google Calendar</div>` +
