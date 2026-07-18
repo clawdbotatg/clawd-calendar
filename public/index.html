@@ -752,27 +752,10 @@
           alert("Network error — try again.");
         }
       };
-      bn.append(cxl, ". ");
-      // Escape hatch for the rare "I want ANOTHER meeting" case — everything
-      // else on this page now means "move my existing one".
-      const sep = document.createElement("a");
-      sep.href = "#";
-      sep.textContent = "Booking a separate call? Start here";
-      sep.onclick = async (e) => {
-        e.preventDefault();
-        manageKey = null; // keep myBooked — the existing call stays blue
-        show("loading");
-        try { await load(); } catch { return showMsg("⚠️", "Couldn't load — try again.", ""); }
-        openPicker();
-      };
-      bn.append(sep, ".");
+      bn.append(cxl, ".");
       bn.classList.remove("hidden");
       // Land the guest on their meeting: its month, its day, its hour.
       selectedDay = dayKeyOf(b.startUtc);
-    } else if (myBooked) {
-      const bn = $("myBooking");
-      bn.textContent = `📅 Booking a separate call — your appointment on ${fmtDay(myBooked.startUtc, guestTz)} · ${fmtTime(myBooked.startUtc, guestTz)} stays as is.`;
-      bn.classList.remove("hidden");
     } else {
       $("myBooking").classList.add("hidden");
     }
