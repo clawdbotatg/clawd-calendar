@@ -216,7 +216,7 @@ async function handleBook(req, res) {
       (cfg.eventDescription ? `${cfg.eventDescription}\n\n———\n` : "") +
       `Booked via ${cfg.baseUrl}${type ? ` (${type.label})` : ""} (link: ${token.label})` +
       (note ? `\n\nNote from ${name}:\n${note}` : "") +
-      `\n\nNeed to reschedule? ${rescheduleUrl}`;
+      `\n\nNeed to reschedule or cancel? ${rescheduleUrl}`;
     const ev = await gcal.createEvent({
       calendarId: cfg.calendarId,
       summary, description,
@@ -283,6 +283,20 @@ async function lookupManaged(res, key) {
   const b = db.getBookingByKey(String(key || ""));
   if (!b) { await sleep(300); json(res, 404, { error: "unknown link" }); return null; }
   return b;
+}
+
+// The booking's "Prepare:" companion event, if we can identify it. Stored id
+// first; legacy bookings (pre-reschedule) are found by summary + start time
+// in a tight calendar window around the old prep slot.
+async function findPrepEventId(cfg, booking) {
+  if (booking.prepGcalEventId) return booking.prepGcalEventId;
+  if (!(cfg.prepMinutes > 0)) return null;
+  const prepStart = Date.parse(booking.startUtc) - cfg.prepMinutes * 60_000;
+  const evs = await gcal.listEvents(cfg.calendarId,
+    new Date(prepStart - 60_000).toISOString(), new Date(prepStart + 60_000).toISOString());
+  const hit = (evs || []).find((e) =>
+    String(e.summary || "").startsWith("Prepare:") && e.start && Date.parse(e.start) === prepStart);
+  return hit ? hit.id : null;
 }
 
 const bookingPublic = (b) => ({
@@ -357,17 +371,7 @@ async function handleManageReschedule(req, res, key) {
     if (cfg.prepMinutes > 0) {
       const prepStart = new Date(Date.parse(slot.startUtc) - cfg.prepMinutes * 60_000).toISOString();
       try {
-        let prepId = fresh.prepGcalEventId;
-        if (!prepId) {
-          // Legacy booking (pre-reschedule): find its prep block by summary +
-          // old start time in a small calendar window around the old slot.
-          const oldPrepStart = Date.parse(fresh.startUtc) - cfg.prepMinutes * 60_000;
-          const evs = await gcal.listEvents(cfg.calendarId,
-            new Date(oldPrepStart - 60_000).toISOString(), new Date(oldPrepStart + 60_000).toISOString());
-          const hit = (evs || []).find((e) =>
-            String(e.summary || "").startsWith("Prepare:") && e.start && Date.parse(e.start) === oldPrepStart);
-          prepId = hit ? hit.id : null;
-        }
+        let prepId = await findPrepEventId(cfg, fresh);
         if (prepId) {
           await gcal.patchEventTime({
             calendarId: cfg.calendarId, eventId: prepId,
@@ -400,6 +404,46 @@ async function handleManageReschedule(req, res, key) {
       typeLabel: type ? type.label : null, tokenLabel: access.token.label, meetLink: fresh.meetLink,
     });
     return { code: 200, body: { ok: true, startUtc: slot.startUtc, endUtc: slot.endUtc, meetLink: fresh.meetLink } };
+  }));
+  json(res, result.code, result.body);
+}
+
+async function handleManageCancel(req, res, key) {
+  const ip = clientIp(req);
+  if (!rateLimit(`book:${ip}`, 10, 3_600_000)) return json(res, 429, { error: "too many attempts, try later" });
+
+  const b0 = await lookupManaged(res, key);
+  if (!b0) return;
+
+  const result = await (bookingChain = bookingChain.catch(() => {}).then(async () => {
+    const b = db.getBookingByKey(key);
+    if (!b || b.status !== "booked") return { code: 410, body: { error: "this booking was already cancelled" } };
+    if (Date.parse(b.startUtc) <= Date.now()) return { code: 410, body: { error: "this call already happened" } };
+    const access = accessForBooking(b);
+    const { cfg } = access;
+
+    // Delete the real event first — Google emails the guest the
+    // cancellation. Already-gone events count as success.
+    if (b.gcalEventId)
+      await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: b.gcalEventId });
+
+    // The prep block goes quietly (owner-only, no attendees). Best-effort.
+    try {
+      const prepId = await findPrepEventId(cfg, b);
+      if (prepId) await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: prepId, sendUpdates: "none" });
+    } catch (err) {
+      console.error(`[cancel] prep delete failed (booking cancelled anyway): ${err.message}`);
+    }
+
+    db.cancelBooking(b.id);
+    const type = access.type;
+    console.log(`[cancel] ${b.guestName} <${b.guestEmail}> ${b.startUtc} self-cancelled${b.typeKey ? ` (type ${b.typeKey})` : ""} — day freed`);
+    notify.bookingNotify({
+      guestName: b.guestName, guestEmail: b.guestEmail, note: null,
+      startUtc: b.startUtc, endUtc: b.endUtc, cancelled: true,
+      typeLabel: type ? type.label : null, tokenLabel: access.token.label, meetLink: null,
+    });
+    return { code: 200, body: { ok: true } };
   }));
   json(res, result.code, result.body);
 }
@@ -661,10 +705,11 @@ const server = http.createServer(async (req, res) => {
       return await handleSlots(req, res, url);
     }
     if (url.pathname === "/api/book" && req.method === "POST") return await handleBook(req, res);
-    const mg = url.pathname.match(/^\/api\/manage\/([A-Za-z0-9_-]{1,64})(\/reschedule)?$/);
+    const mg = url.pathname.match(/^\/api\/manage\/([A-Za-z0-9_-]{1,64})(\/reschedule|\/cancel)?$/);
     if (mg) {
       if (!mg[2] && req.method === "GET") return await handleManageGet(req, res, url, mg[1]);
-      if (mg[2] && req.method === "POST") return await handleManageReschedule(req, res, mg[1]);
+      if (mg[2] === "/reschedule" && req.method === "POST") return await handleManageReschedule(req, res, mg[1]);
+      if (mg[2] === "/cancel" && req.method === "POST") return await handleManageCancel(req, res, mg[1]);
       return json(res, 404, { error: "not found" });
     }
     if (url.pathname.startsWith("/api/admin/")) return await handleAdminApi(req, res, url);

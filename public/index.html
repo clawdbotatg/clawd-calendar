@@ -555,7 +555,7 @@
         when.textContent = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
         const a = document.createElement("a");
         a.href = `/r/${encodeURIComponent(mine.key)}`;
-        a.textContent = "Reschedule →";
+        a.textContent = "Reschedule or cancel →";
         bn.append(when, ". ", a);
         bn.classList.remove("hidden");
         return;
@@ -625,8 +625,31 @@
       const bn = $("myBooking");
       bn.textContent = `♻️ Rescheduling ${b.guestName}'s call — currently `;
       const when = document.createElement("b");
-      when.textContent = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
-      bn.append(when, ". Pick a new time below to move it.");
+      const whenTxt = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
+      when.textContent = whenTxt;
+      bn.append(when, ". Pick a new time below to move it — or ");
+      const cxl = document.createElement("a");
+      cxl.href = "#";
+      cxl.textContent = "cancel this call";
+      cxl.onclick = async (e) => {
+        e.preventDefault();
+        if (!confirm(`Cancel your call on ${whenTxt}? The calendar event will be removed.`)) return;
+        cxl.textContent = "cancelling…";
+        try {
+          const r = await fetch(`/api/manage/${encodeURIComponent(manageKey)}/cancel`, { method: "POST" });
+          const j = await r.json();
+          if (!r.ok) {
+            cxl.textContent = "cancel this call";
+            return alert(j.error || "Couldn't cancel — try again.");
+          }
+          dropMyBooking(manageKey);
+          showMsg("👋", "Cancelled.", `${whenTxt} is freed up — a cancellation notice is on its way to your email.`);
+        } catch {
+          cxl.textContent = "cancel this call";
+          alert("Network error — try again.");
+        }
+      };
+      bn.append(cxl, ".");
       bn.classList.remove("hidden");
     } else {
       showMineBanner();
