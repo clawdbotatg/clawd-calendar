@@ -771,6 +771,7 @@
           }
           dropMyBooking(manageKey);
           showMsg("👋", "Cancelled.", `${whenTxt} is freed up — a cancellation notice is on its way to your email.`);
+          startDoneCountdown(); // back to the (now bookable) calendar
         } catch {
           cxl.textContent = "cancel this call";
           alert("Network error — try again.");
@@ -869,6 +870,7 @@
     $("doneTitle").textContent = title;
     $("doneWhen").textContent = sub || "";
     $("doneNote").classList.add("hidden");
+    $("doneCount").classList.add("hidden");
     show("done");
   }
 
