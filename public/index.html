@@ -328,6 +328,48 @@
     return g.busy.some((b) => Date.parse(b.start) < e && Date.parse(b.end) > s);
   }
 
+  // Keep the overlay live: while the guest lingers on the picker, re-fetch
+  // their free/busy straight from Google every 30s using the short-lived
+  // token the OAuth callback left in THEIR sessionStorage (googleapis.com
+  // allows CORS; the token never touches our server again). A booking made
+  // in another tab shows up here within half a minute. Token expiry or a
+  // revoked grant just stops the refresh — the overlay degrades to the
+  // last-known blocks, exactly the old behavior.
+  const GUEST_REFRESH_MS = 30_000;
+  let guestRefreshing = false;
+  async function refreshGuestBusy() {
+    const g = guestCal();
+    if (!data || !g || !g.tok || Date.now() > (g.exp || 0) || document.hidden || guestRefreshing) return;
+    guestRefreshing = true;
+    try {
+      const horizonMs = (data.maxDaysOut + 2) * 86_400_000;
+      const r = await fetch("https://www.googleapis.com/calendar/v3/freeBusy", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${g.tok}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timeMin: new Date().toISOString(),
+          timeMax: new Date(Date.now() + horizonMs).toISOString(),
+          items: [{ id: "primary" }],
+        }),
+      });
+      if (r.status === 401 || r.status === 403) {  // token dead — stop polling
+        g.tok = null;
+        sessionStorage.setItem("cal_guest", JSON.stringify(g));
+        return;
+      }
+      if (!r.ok) return;
+      const j = await r.json();
+      const busy = (j.calendars && j.calendars.primary && j.calendars.primary.busy) || [];
+      const changed = JSON.stringify(busy) !== JSON.stringify(g.busy);
+      g.busy = busy;
+      g.at = Date.now();  // rolling TTL — stays fresh while polling works
+      sessionStorage.setItem("cal_guest", JSON.stringify(g));
+      if (changed && !$("picker").classList.contains("hidden")) renderTimes();
+    } catch {} finally { guestRefreshing = false; }
+  }
+  setInterval(refreshGuestBusy, GUEST_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshGuestBusy(); });
+
   // ---- formatting / tz helpers ----
   const fmtDay = (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(new Date(iso));
   const fmtTime = (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(new Date(iso));

@@ -484,11 +484,16 @@ async function handleGuestCallback(req, res, url) {
 
   // Degrade gracefully: a guest whose account has no Google Calendar (or a
   // freebusy hiccup) just lands back on the picker with a soft notice.
-  let email = null, name = null, busy = null;
+  let email = null, name = null, busy = null, tok = null, exp = 0;
   try {
     const g = await gcal.guestExchange(code, guestRedirectUri());
     email = g.email;
     name = g.name;
+    // The short-lived access token travels to the GUEST'S browser (never
+    // stored here) so the page can re-poll their free/busy directly from
+    // Google and keep the overlay live while they linger on the picker.
+    tok = gcal.FAKE ? null : g.accessToken;
+    exp = Date.now() + (g.expiresIn || 3600) * 1000;
     const horizonMs = (CONFIG.maxDaysOut + 2) * 86_400_000;
     busy = await gcal.guestFreeBusy(g.accessToken,
       new Date().toISOString(), new Date(Date.now() + horizonMs).toISOString());
@@ -498,7 +503,7 @@ async function handleGuestCallback(req, res, url) {
 
   // Hand the result to the guest's browser and bounce back to the picker.
   const store = busy
-    ? `sessionStorage.setItem("cal_guest", ${JSON.stringify(JSON.stringify({ email, name, busy, at: Date.now() }).replace(/</g, "\\u003c"))});`
+    ? `sessionStorage.setItem("cal_guest", ${JSON.stringify(JSON.stringify({ email, name, busy, at: Date.now(), tok, exp }).replace(/</g, "\\u003c"))});`
     : `sessionStorage.setItem("cal_guest_err", "1");`;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   res.end(`<!doctype html><script>
