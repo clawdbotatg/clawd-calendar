@@ -484,10 +484,11 @@ async function handleGuestCallback(req, res, url) {
 
   // Degrade gracefully: a guest whose account has no Google Calendar (or a
   // freebusy hiccup) just lands back on the picker with a soft notice.
-  let email = null, busy = null;
+  let email = null, name = null, busy = null;
   try {
     const g = await gcal.guestExchange(code, guestRedirectUri());
     email = g.email;
+    name = g.name;
     const horizonMs = (CONFIG.maxDaysOut + 2) * 86_400_000;
     busy = await gcal.guestFreeBusy(g.accessToken,
       new Date().toISOString(), new Date(Date.now() + horizonMs).toISOString());
@@ -497,7 +498,7 @@ async function handleGuestCallback(req, res, url) {
 
   // Hand the result to the guest's browser and bounce back to the picker.
   const store = busy
-    ? `sessionStorage.setItem("cal_guest", ${JSON.stringify(JSON.stringify({ email, busy, at: Date.now() }).replace(/</g, "\\u003c"))});`
+    ? `sessionStorage.setItem("cal_guest", ${JSON.stringify(JSON.stringify({ email, name, busy, at: Date.now() }).replace(/</g, "\\u003c"))});`
     : `sessionStorage.setItem("cal_guest_err", "1");`;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   res.end(`<!doctype html><script>

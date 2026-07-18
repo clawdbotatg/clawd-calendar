@@ -105,11 +105,16 @@
   .tslot.conflict:hover { opacity: 1; }
   .noday { color: var(--muted); font-size: .9rem; text-align: center; padding: 24px 0; }
 
-  /* connect bar */
-  .connectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px;
-                border: 1px dashed var(--line); border-radius: 0; padding: 10px 14px;
-                font-size: .85rem; color: var(--muted); }
-  .connectbar button { width: auto; padding: 7px 14px; font-size: .85rem; }
+  /* connect hero — top of the picker, the first thing a guest sees */
+  .connecthero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+                 background: color-mix(in srgb, var(--accent) 7%, var(--card));
+                 border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+                 padding: 16px 20px; margin-bottom: 16px; }
+  .connecthero .grow2 { flex: 1; min-width: 240px; }
+  .connecthero .big { font-weight: 700; font-size: 1.05rem; margin-bottom: 2px; }
+  .connecthero .sub2 { color: var(--muted); font-size: .85rem; }
+  .connecthero button { width: auto; padding: 11px 20px; }
+  .connecthero .acct { font-weight: 600; }
   .legend { display: inline-flex; gap: 12px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 0; margin-right: 5px; }
   .banner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); border: 1px solid var(--accent);
@@ -197,6 +202,7 @@
     <pre id="heroAscii" class="hero hidden"></pre>
     <div id="goldBanner" class="banner hidden"></div>
     <div id="myBooking" class="banner hidden"></div>
+    <div id="connectBar" class="connecthero hidden"></div>
     <div class="layout">
       <aside class="pane info">
         <img id="avatar" class="avatar hidden" alt="">
@@ -219,7 +225,6 @@
           Time zone
           <select id="tzSel"></select>
         </div>
-        <div id="connectBar" class="connectbar hidden"></div>
       </section>
 
       <section class="pane times">
@@ -504,17 +509,20 @@
     return tl;
   }
 
-  // ---- connect bar ----
+  // ---- connect hero (top of the picker) ----
   function renderConnectBar() {
     const bar = $("connectBar");
     // Manage mode has no route token for the OAuth round-trip — skip it.
     if (!data.overlay || manageKey) return bar.classList.add("hidden");
     bar.classList.remove("hidden");
     const g = guestCal();
+    const clean = (s) => String(s || "").replace(/[<>&]/g, "");
     if (g) {
-      bar.innerHTML = `<span class="legend"><span><i style="background:var(--ok)"></i>works for both</span>` +
+      bar.innerHTML = `<div class="grow2"><div class="big">✅ Google Calendar connected` +
+        (g.email ? ` — <span class="acct">${clean(g.email)}</span>` : "") + `</div>` +
+        `<div class="sub2"><span class="legend"><span><i style="background:var(--ok)"></i>works for both</span>` +
         `<span><i style="background:#dc2626"></i>you're busy</span></span>` +
-        `<span>· ${g.email ? g.email.replace(/[<>&]/g, "") : "calendar connected"}</span>` +
+        ` · your name &amp; email will be filled in for you</div></div>` +
         `<a href="#" id="disconnect">disconnect</a>`;
       bar.querySelector("#disconnect").onclick = (e) => {
         e.preventDefault(); sessionStorage.removeItem("cal_guest"); renderConnectBar(); setViewMode("list");
@@ -522,10 +530,11 @@
     } else {
       const failed = sessionStorage.getItem("cal_guest_err");
       sessionStorage.removeItem("cal_guest_err");
-      bar.innerHTML = (failed ? `<span>⚠️ Couldn't read that account's calendar — it may not use Google Calendar. Try another?</span>` :
-        `<span>See which times work for you too:</span>`) +
-        `<button id="connectBtn">📅 Connect your calendar</button>` +
-        `<span style="font-size:.78rem">(only free/busy — we never see event details, nothing is stored)</span>`;
+      bar.innerHTML = `<div class="grow2"><div class="big">📅 Connect your Google Calendar</div>` +
+        `<div class="sub2">${failed
+          ? `⚠️ Couldn't read that account's calendar — it may not use Google Calendar. Try another?`
+          : `See which times work for both of us before you pick — and skip typing your name and email. We only read free/busy, never event details, and nothing is stored.`}</div></div>` +
+        `<button id="connectBtn">Connect Google</button>`;
       bar.querySelector("#connectBtn").onclick = () => {
         location.href = `/oauth/guest/start?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
       };
@@ -673,16 +682,19 @@
     $("chosen").textContent = `${fmtDay(selected.startUtc, guestTz)} · ${fmtTime(selected.startUtc, guestTz)}–${fmtTime(selected.endUtc, guestTz)} (${guestTz})`;
     $("conflictWarn").classList.toggle("hidden", !guestConflict(selected));
     if (!manageKey) {
+      // Prefill: the connected Google account first, then anything this
+      // browser booked before — the guest should just hit "Book it".
       const g = guestCal();
       if (g && g.email && !$("email").value) $("email").value = g.email;
+      if (g && g.name && !$("name").value) $("name").value = g.name;
       const last = myBookings().slice(-1)[0];
-      if (last) {  // we've met this browser before — save the typing
+      if (last) {
         if (!$("name").value && last.name) $("name").value = last.name;
         if (!$("email").value && last.email) $("email").value = last.email;
       }
     }
     $("formErr").textContent = "";
-    if (!manageKey) $("name").focus();
+    if (!manageKey) ($("name").value && $("email").value ? $("bookBtn") : $("name")).focus();
   }
   $("backBtn").onclick = () => show("picker");
   $("bookBtn").onclick = async () => {
