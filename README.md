@@ -116,6 +116,19 @@ node scripts/types.js --disable office   # kills all its links (--enable undoes)
 A password typed on the landing page finds its own event type — the page
 redirects itself to the right route.
 
+## Guest calendar overlay
+
+A "Connect your Google Calendar" hero tops the picker (needs a separate
+"Web application" OAuth client — `GCAL_WEB_CLIENT_ID`/`_SECRET`; unset =
+feature off). The guest consents with the free/busy scope only; their busy
+blocks land in *their* browser's sessionStorage (green = works for both,
+red = they're busy, plus a whole-day timeline view), the booking form
+prefills their name + email from the Google account (`profile` scope,
+non-sensitive) so they just hit go, and the page re-polls their free/busy
+straight from Google every 30s (and instantly on tab return) using the
+short-lived token — the server never stores it. A footer at the bottom
+shows "You are connected as Name (email)" with a Disconnect button.
+
 ## Rescheduling & cancelling
 
 One calendar does everything. Every booking mints an unguessable **manage
@@ -166,8 +179,9 @@ stays the source of truth for busy time.
 
 ## Roadmap
 
-- **Phase 2** — optional guest calendar overlay (Google OAuth,
-  `calendar.freebusy` scope only) to grey out mutually-busy slots.
+- **Phase 2** — ~~optional guest calendar overlay (Google OAuth,
+  `calendar.freebusy` scope only) to grey out mutually-busy slots~~
+  (shipped — with live 30s refresh and name/email prefill).
 - **Phase 3** — ~~tiny admin page (mint links, upcoming bookings)~~ (shipped),
   ~~first-party reschedule + cancel~~ (shipped), reminders.
 - **Phase 4** — voice agent: same `getOpenSlots()`/book endpoints, third client.
