@@ -212,11 +212,13 @@ async function handleBook(req, res) {
     // in the invite description, so the guest (and the owner) always have it.
     const manageKey = db.newManageKey();
     const rescheduleUrl = `${cfg.baseUrl.replace(/\/$/, "")}/r/${manageKey}`;
+    // Guest-facing only: the type's custom text, their note, the manage
+    // link. Provenance (which link booked it) lives in the Telegram ping
+    // and the admin page, not the invite.
     const description =
-      (cfg.eventDescription ? `${cfg.eventDescription}\n\n———\n` : "") +
-      `Booked via ${cfg.baseUrl}${type ? ` (${type.label})` : ""} (link: ${token.label})` +
-      (note ? `\n\nNote from ${name}:\n${note}` : "") +
-      `\n\nNeed to reschedule or cancel? ${rescheduleUrl}`;
+      (cfg.eventDescription ? `${cfg.eventDescription}\n\n` : "") +
+      (note ? `Note from ${name}:\n${note}\n\n` : "") +
+      `Need to reschedule or cancel? ${rescheduleUrl}`;
     const ev = await gcal.createEvent({
       calendarId: cfg.calendarId,
       summary, description,
