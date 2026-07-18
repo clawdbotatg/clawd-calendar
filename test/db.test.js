@@ -37,3 +37,41 @@ test("getPublicToken resolves per route and respects disable", () => {
   db.createToken({ token: "pub-default-2", label: "walk-ins v2", isPublic: true });
   assert.equal(db.getPublicToken(null).token, "pub-default-2");
 });
+
+test("manage keys: minted on booking, looked up, rescheduled", () => {
+  db.open();
+  db.createToken({ token: "pw1", label: "test link" });
+  const id = db.logBooking({
+    token: "pw1", guestName: "Ada", guestEmail: "ada@example.com",
+    startUtc: "2099-01-05T17:00:00.000Z", endUtc: "2099-01-05T18:00:00.000Z",
+    ownerDayKey: "2099-01-05", gcalEventId: "ev1", prepGcalEventId: "prep1",
+  });
+
+  // A key was minted automatically and resolves back to the booking.
+  const row = db.listBookings().find((b) => b.id === id);
+  assert.ok(row.manageKey && row.manageKey.length >= 10);
+  const b = db.getBookingByKey(row.manageKey);
+  assert.equal(b.id, id);
+  assert.equal(b.prepGcalEventId, "prep1");
+  assert.equal(db.getBookingByKey("nope"), null);
+  assert.equal(db.getBookingByKey(null), null);
+
+  // Reschedule moves the times + day key, frees the old day for the cap.
+  assert.ok(db.rescheduleBooking(id, {
+    startUtc: "2099-01-07T17:00:00.000Z", endUtc: "2099-01-07T18:00:00.000Z",
+    ownerDayKey: "2099-01-07",
+  }));
+  const moved = db.getBookingByKey(row.manageKey);
+  assert.equal(moved.startUtc, "2099-01-07T17:00:00.000Z");
+  assert.equal(moved.ownerDayKey, "2099-01-07");
+  assert.deepEqual(db.bookedByDay(null), { "2099-01-07": 1 });
+
+  // The key survives (same link keeps working); cancelled bookings don't move.
+  db.setPrepEventId(id, "prep2");
+  assert.equal(db.getBookingByKey(row.manageKey).prepGcalEventId, "prep2");
+  db.cancelBooking(id);
+  assert.equal(db.rescheduleBooking(id, {
+    startUtc: "2099-01-08T17:00:00.000Z", endUtc: "2099-01-08T18:00:00.000Z",
+    ownerDayKey: "2099-01-08",
+  }), false);
+});

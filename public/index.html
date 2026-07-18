@@ -196,6 +196,7 @@
   <div id="picker" class="hidden">
     <pre id="heroAscii" class="hero hidden"></pre>
     <div id="goldBanner" class="banner hidden"></div>
+    <div id="myBooking" class="banner hidden"></div>
     <div class="layout">
       <aside class="pane info">
         <img id="avatar" class="avatar hidden" alt="">
@@ -237,10 +238,12 @@
     <p class="sub" id="chosen"></p>
     <div id="conflictWarn" class="warnbadge hidden">⚠️ Heads up — your calendar looks busy at this time.</div>
     <div class="card">
-      <label>Your name</label>
-      <input id="name" autocomplete="name" placeholder="Ada Lovelace">
-      <label>Email</label>
-      <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+      <div id="whoFields">
+        <label>Your name</label>
+        <input id="name" autocomplete="name" placeholder="Ada Lovelace">
+        <label>Email</label>
+        <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+      </div>
       <div id="formErr" class="err"></div>
       <button id="bookBtn">Book it</button>
       <button class="back" id="backBtn">← pick a different time</button>
@@ -250,10 +253,10 @@
   <!-- confirmation -->
   <div id="done" class="hidden">
     <div class="card" style="text-align:center">
-      <div class="ok-big">✅</div>
+      <div class="ok-big" id="doneIcon">✅</div>
       <h1 id="doneTitle">Booked!</h1>
       <p id="doneWhen" class="sub"></p>
-      <p>A Google Calendar invite is on its way to your email.</p>
+      <p id="doneNote">A Google Calendar invite is on its way to your email.</p>
       <p id="meetP" class="hidden"><a id="meetA" href="#" target="_blank" rel="noopener">Google Meet link</a></p>
     </div>
   </div>
@@ -275,8 +278,11 @@
   // resolves its public token, same as / does for the default type.
   const m = location.pathname.match(/^\/([A-Za-z0-9_-]+)\/([^/]+)$/);
   const bare = m ? null : location.pathname.match(/^\/([A-Za-z0-9_-]+)\/?$/);
-  const pathType = m ? m[1] : bare ? bare[1] : null;
-  const token = m ? decodeURIComponent(m[2]) : null;
+  // /r/<manageKey> — reschedule mode: the key came from a booking's invite
+  // and resolves to exactly one booking server-side.
+  const manageKey = m && m[1] === "r" ? decodeURIComponent(m[2]) : null;
+  const pathType = manageKey ? null : m ? m[1] : bare ? bare[1] : null;
+  const token = manageKey ? null : m ? decodeURIComponent(m[2]) : null;
   const pubType = !token && pathType && pathType !== "a" ? pathType : "";
   let guestTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let data = null, selected = null;
@@ -284,6 +290,22 @@
   let selectedDay = null;         // dayKey
   let calCursor = null;           // { y, m } month shown
   let viewMode = "list";          // times pane: "list" | "day"
+
+  // ---- my bookings (localStorage) ----
+  // Every successful booking is remembered in this browser, so revisiting
+  // the same calendar link shows "you're already booked — reschedule".
+  const LS_MINE = "cal_mine";
+  function myBookings() {
+    try { return JSON.parse(localStorage.getItem(LS_MINE)) || []; } catch { return []; }
+  }
+  function saveMyBooking(entry) {
+    const list = myBookings().filter((x) => x.key !== entry.key);
+    list.push(entry);
+    try { localStorage.setItem(LS_MINE, JSON.stringify(list.slice(-10))); } catch {}
+  }
+  function dropMyBooking(key) {
+    try { localStorage.setItem(LS_MINE, JSON.stringify(myBookings().filter((x) => x.key !== key))); } catch {}
+  }
 
   // ---- guest calendar overlay ----
   const GUEST_TTL = 30 * 60_000;
@@ -485,7 +507,8 @@
   // ---- connect bar ----
   function renderConnectBar() {
     const bar = $("connectBar");
-    if (!data.overlay) return bar.classList.add("hidden");
+    // Manage mode has no route token for the OAuth round-trip — skip it.
+    if (!data.overlay || manageKey) return bar.classList.add("hidden");
     bar.classList.remove("hidden");
     const g = guestCal();
     if (g) {
@@ -506,6 +529,37 @@
       bar.querySelector("#connectBtn").onclick = () => {
         location.href = `/oauth/guest/start?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
       };
+    }
+  }
+
+  // "You're already booked" banner: newest upcoming localStorage entry for
+  // this event type, verified against the server (stale entries pruned —
+  // cancelled, already happened, or the calendar event was deleted).
+  async function showMineBanner() {
+    const list = myBookings()
+      .filter((x) => x.typeKey === data.typeKey)
+      .sort((a, b) => (a.startUtc < b.startUtc ? 1 : -1));
+    for (const mine of list) {
+      if (Date.parse(mine.endUtc) < Date.now()) { dropMyBooking(mine.key); continue; }
+      try {
+        const r = await fetch(`/api/manage/${encodeURIComponent(mine.key)}?slots=0`);
+        if (r.status === 404) { dropMyBooking(mine.key); continue; }
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (!j.reschedulable) { dropMyBooking(mine.key); continue; }
+        const b = j.booking;
+        saveMyBooking({ ...mine, startUtc: b.startUtc, endUtc: b.endUtc }); // may have moved
+        const bn = $("myBooking");
+        bn.textContent = `👋 ${b.guestName} — you're already booked for `;
+        const when = document.createElement("b");
+        when.textContent = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
+        const a = document.createElement("a");
+        a.href = `/r/${encodeURIComponent(mine.key)}`;
+        a.textContent = "Reschedule →";
+        bn.append(when, ". ", a);
+        bn.classList.remove("hidden");
+        return;
+      } catch {}
     }
   }
 
@@ -566,6 +620,17 @@
       $("goldBanner").classList.remove("hidden");
       $("goldBanner").textContent = `Golden ticket: pick any time that works for you — ${data.ownerName} will move things around to be there.`;
     }
+    if (manageKey) {
+      const b = data.booking;
+      const bn = $("myBooking");
+      bn.textContent = `♻️ Rescheduling ${b.guestName}'s call — currently `;
+      const when = document.createElement("b");
+      when.textContent = `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)}`;
+      bn.append(when, ". Pick a new time below to move it.");
+      bn.classList.remove("hidden");
+    } else {
+      showMineBanner();
+    }
     tzOptions();
     renderConnectBar();
     $("vList").onclick = () => setViewMode("list");
@@ -575,59 +640,109 @@
     setViewMode(guestCal() ? "day" : "list");
   }
 
-  // ---- form ----
+  // ---- form (booking + reschedule confirm) ----
+  const bookLabel = () => manageKey ? "Move it" : "Book it";
   function openForm() {
     show("form");
+    document.querySelector("#form h1").textContent = manageKey ? "Confirm your new time" : "Confirm your time";
+    $("whoFields").classList.toggle("hidden", !!manageKey);
+    $("bookBtn").textContent = bookLabel();
     $("chosen").textContent = `${fmtDay(selected.startUtc, guestTz)} · ${fmtTime(selected.startUtc, guestTz)}–${fmtTime(selected.endUtc, guestTz)} (${guestTz})`;
     $("conflictWarn").classList.toggle("hidden", !guestConflict(selected));
-    const g = guestCal();
-    if (g && g.email && !$("email").value) $("email").value = g.email;
+    if (!manageKey) {
+      const g = guestCal();
+      if (g && g.email && !$("email").value) $("email").value = g.email;
+      const last = myBookings().slice(-1)[0];
+      if (last) {  // we've met this browser before — save the typing
+        if (!$("name").value && last.name) $("name").value = last.name;
+        if (!$("email").value && last.email) $("email").value = last.email;
+      }
+    }
     $("formErr").textContent = "";
-    $("name").focus();
+    if (!manageKey) $("name").focus();
   }
   $("backBtn").onclick = () => show("picker");
   $("bookBtn").onclick = async () => {
-    const name = $("name").value.trim(), email = $("email").value.trim();
-    if (!name) return $("formErr").textContent = "Name required.";
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $("formErr").textContent = "Valid email required.";
-    $("bookBtn").disabled = true; $("bookBtn").textContent = "Booking…";
+    let name = "", email = "";
+    if (!manageKey) {
+      name = $("name").value.trim(); email = $("email").value.trim();
+      if (!name) return $("formErr").textContent = "Name required.";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $("formErr").textContent = "Valid email required.";
+    }
+    $("bookBtn").disabled = true; $("bookBtn").textContent = manageKey ? "Moving…" : "Booking…";
     try {
-      const r = await fetch("/api/book", {
+      const r = await fetch(manageKey ? `/api/manage/${encodeURIComponent(manageKey)}/reschedule` : "/api/book", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token || "", type: pubType, startUtc: selected.startUtc, name, email }),
+        body: JSON.stringify(manageKey
+          ? { startUtc: selected.startUtc }
+          : { token: token || "", type: pubType, startUtc: selected.startUtc, name, email }),
       });
       const j = await r.json();
       if (!r.ok) {
-        $("bookBtn").disabled = false; $("bookBtn").textContent = "Book it";
+        $("bookBtn").disabled = false; $("bookBtn").textContent = bookLabel();
         if (r.status === 409) {
           $("formErr").textContent = j.error;
           await load(); show("picker"); regroup(); renderCalendar(); renderTimes();
+        } else if (r.status === 410) {
+          showMsg("ℹ️", "This booking no longer exists.", j.error || "");
         } else $("formErr").textContent = j.error || "Something went wrong.";
         return;
       }
+      if (manageKey) {
+        saveMyBooking({ key: manageKey, startUtc: j.startUtc, endUtc: j.endUtc,
+          typeKey: data.booking.typeKey, name: data.booking.guestName });
+      } else if (j.manageKey) {
+        saveMyBooking({ key: j.manageKey, startUtc: j.startUtc, endUtc: j.endUtc,
+          typeKey: data.typeKey, name, email });
+      }
+      $("doneTitle").textContent = manageKey ? "Rescheduled!" : "Booked!";
+      $("doneNote").textContent = manageKey
+        ? "Google Calendar is emailing you the updated invite."
+        : "A Google Calendar invite is on its way to your email.";
       $("doneWhen").textContent = `${fmtDay(j.startUtc, guestTz)} · ${fmtTime(j.startUtc, guestTz)}–${fmtTime(j.endUtc, guestTz)} (${guestTz})`;
       if (j.meetLink) { $("meetP").classList.remove("hidden"); $("meetA").href = j.meetLink; }
       show("done");
     } catch {
-      $("bookBtn").disabled = false; $("bookBtn").textContent = "Book it";
+      $("bookBtn").disabled = false; $("bookBtn").textContent = bookLabel();
       $("formErr").textContent = "Network error — try again.";
     }
   };
 
+  // Terminal message on the confirmation card (bad/expired reschedule links).
+  function showMsg(icon, title, sub) {
+    $("doneIcon").textContent = icon;
+    $("doneTitle").textContent = title;
+    $("doneWhen").textContent = sub || "";
+    $("doneNote").classList.add("hidden");
+    $("meetP").classList.add("hidden");
+    show("done");
+  }
+
   // ---- boot ----
   async function load() {
-    const r = await fetch(`/api/slots?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`);
+    const r = await fetch(manageKey
+      ? `/api/manage/${encodeURIComponent(manageKey)}`
+      : `/api/slots?token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`);
     if (!r.ok) throw Object.assign(new Error("bad token"), { status: r.status });
     data = await r.json();
   }
   (async () => {
     // Bare visit: try public ("shields down") mode first — if the server has
     // no public token configured it 404s and we fall back to the gate.
-    try { await load(); openPicker(); }
+    try { await load(); }
     catch (e) {
+      if (manageKey) return showMsg("⚠️", "That reschedule link isn't valid.",
+        "Check the link in your calendar invite, or ask for a fresh one.");
       if (!token) return gate();
-      gate(e.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again.");
+      return gate(e.status === 404 ? "That password/link isn't valid." : "Couldn't load — try again.");
     }
+    if (manageKey && !data.reschedulable) {
+      const b = data.booking || {};
+      return showMsg("ℹ️",
+        b.status === "booked" ? "This call already happened." : "This booking was cancelled.",
+        b.startUtc ? `${fmtDay(b.startUtc, guestTz)} · ${fmtTime(b.startUtc, guestTz)} (${guestTz})` : "");
+    }
+    openPicker();
   })();
 })();
 </script>

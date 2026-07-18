@@ -222,3 +222,31 @@ test("titled day counts close those days for the type's cap", () => {
   assert.equal(startsOn(slots, 8).length, 0, "manually-added episode closes Wed");
   assert.ok(startsOn(slots, 9).length > 0, "Thu unaffected");
 });
+
+const { subtractBusy } = require("../lib/slots");
+
+test("subtractBusy carves the guest's own event out of the busy list", () => {
+  const busy = [
+    { start: mtnIso(7, 9), end: mtnIso(7, 10) },    // their booking (9–10)
+    { start: mtnIso(7, 13), end: mtnIso(7, 14) },   // someone else's
+  ];
+  // Cut covers prep + event (8:45–10:00): their block vanishes, other stays.
+  const out = subtractBusy(busy, mtnIso(7, 8, 45), mtnIso(7, 10));
+  assert.deepEqual(out, [{ start: mtnIso(7, 13), end: mtnIso(7, 14) }]);
+
+  // A merged freebusy block extending past the cut keeps its remainder —
+  // e.g. back-to-back meeting 10–11 merged with the booking into 9–11.
+  const merged = subtractBusy([{ start: mtnIso(7, 9), end: mtnIso(7, 11) }], mtnIso(7, 9), mtnIso(7, 10));
+  assert.deepEqual(merged, [{ start: mtnIso(7, 10), end: mtnIso(7, 11) }]);
+
+  // Cut inside a block splits it in two.
+  const split = subtractBusy([{ start: mtnIso(7, 9), end: mtnIso(7, 12) }], mtnIso(7, 10), mtnIso(7, 11));
+  assert.deepEqual(split, [
+    { start: mtnIso(7, 9), end: mtnIso(7, 10) },
+    { start: mtnIso(7, 11), end: mtnIso(7, 12) },
+  ]);
+
+  // With their own block gone, their old slot is offerable again.
+  const slots = run({ busy: subtractBusy(busy, mtnIso(7, 8, 45), mtnIso(7, 10)), now: NOW });
+  assert.ok(startsOn(slots, 7).includes(mtnIso(7, 9)));
+});

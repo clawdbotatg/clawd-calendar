@@ -174,6 +174,8 @@ function renderBookings(id, list) {
       <span class="meta">${b.typeKey ? esc(typeLabel(b.typeKey)) + " · " : ""}via “${esc(b.token)}”</span>
       <span><b>${fmtWhen(b.startUtc)}</b></span>
       ${b.meetLink ? `<a href="${esc(b.meetLink)}" target="_blank" rel="noopener">meet</a>` : ""}
+      ${b.rescheduleUrl && b.status === "booked" && id === "upcoming"
+        ? `<button class="ghost" onclick="copy(${esc(JSON.stringify(b.rescheduleUrl))})">copy reschedule link</button>` : ""}
     </div>`).join("") : `<div class="empty">none</div>`;
 }
 

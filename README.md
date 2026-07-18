@@ -116,6 +116,19 @@ node scripts/types.js --disable office   # kills all its links (--enable undoes)
 A password typed on the landing page finds its own event type — the page
 redirects itself to the right route.
 
+## Rescheduling
+
+Every booking mints an unguessable **manage key**; `/r/<key>` is that
+booking's reschedule page. The link rides in the calendar invite's
+description ("Need to reschedule? …"), so the guest always has it — and the
+admin page has a copy-reschedule-link button per upcoming booking. The page
+greets the guest by name, shows their current time, and one click moves the
+Google Calendar event (guests get the update email; the owner's prep block
+moves too). Their own event never blocks the new pick: its busy time and its
+daily-cap day are excluded while they choose. Booking in a browser also
+remembers the booking in `localStorage`, so revisiting the same calendar
+link shows "you're already booked for … — reschedule" without any key.
+
 ## Admin page
 
 Set `CAL_ADMIN_PASSWORD` and `/admin/<password>` becomes a one-page admin:
@@ -151,5 +164,5 @@ stays the source of truth for busy time.
 - **Phase 2** — optional guest calendar overlay (Google OAuth,
   `calendar.freebusy` scope only) to grey out mutually-busy slots.
 - **Phase 3** — ~~tiny admin page (mint links, upcoming bookings)~~ (shipped),
-  reminders, first-party cancel/reschedule.
+  ~~first-party reschedule~~ (shipped), reminders, first-party cancel.
 - **Phase 4** — voice agent: same `getOpenSlots()`/book endpoints, third client.
