@@ -754,7 +754,14 @@
       bn.textContent = `📅 ${b.guestName ? `${b.guestName} — you` : "You"} have an appointment: `;
       const when = document.createElement("b");
       when.textContent = whenTxt;
-      bn.append(when, ". Select a different time to reschedule, or ");
+      const pick = document.createElement("a");
+      pick.href = "#";
+      pick.textContent = "Select a different time";
+      pick.onclick = (e) => {
+        e.preventDefault();
+        document.querySelector(".calpane").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      bn.append(when, ". ", pick, " below to reschedule, or ");
       const cxl = document.createElement("a");
       cxl.href = "#";
       cxl.textContent = "cancel this call";
