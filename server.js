@@ -558,6 +558,25 @@ const guestRedirectUri = () => `${CONFIG.baseUrl.replace(/\/$/, "")}/oauth/callb
 async function handleGuestStart(req, res, url) {
   const raw = url.searchParams.get("token");
   const pk = pubKey(url.searchParams.get("type"));
+  // Deep opt-in contacts flow (?contacts=1): a popup-based second grant for
+  // the People API, triggered only by the search-my-contacts button on the
+  // add-guests UI. Authorized by the route token like everything else — or
+  // by a live manage key, since manage mode may sit on a password-only
+  // route with no token to hand back.
+  if (url.searchParams.get("contacts") === "1") {
+    let authed = await lookupToken(raw, pk);
+    if (!authed) {
+      const b = db.getBookingByKey(String(url.searchParams.get("manage") || ""));
+      if (b && b.status === "booked") authed = true;
+    }
+    if (!authed) return json(res, 404, { error: "unknown link" });
+    const authUrl = gcal.FAKE
+      ? `/oauth/callback?code=fake&state=%40contacts`
+      : gcal.guestAuthUrl(guestRedirectUri(), "@contacts", gcal.CONTACTS_SCOPE);
+    if (!authUrl) return json(res, 501, { error: "calendar overlay not configured" });
+    res.writeHead(302, { Location: authUrl });
+    return res.end();
+  }
   const token = await lookupToken(raw, pk);
   if (!token) return json(res, 404, { error: "unknown link" });
   // Public (no-password) visitors round-trip a sentinel so the callback
@@ -571,8 +590,42 @@ async function handleGuestStart(req, res, url) {
   res.end();
 }
 
+// Canned People-API hits for GCAL_FAKE dev mode (mirrors fakeBusy).
+const FAKE_CONTACTS = [
+  { name: "Ada Lovelace", email: "ada@fake.test" },
+  { name: "Grace Hopper", email: "grace@fake.test" },
+  { name: "Alan Turing", email: "alan@fake.test" },
+  { name: "Margaret Hamilton", email: "margaret@fake.test" },
+];
+
+// The contacts grant comes back to a POPUP: hand the short-lived access
+// token to the opener page via postMessage and close. The token never
+// touches this server again — the guest's browser queries the People API
+// directly (googleapis.com allows CORS), and nothing is stored anywhere.
+async function handleContactsCallback(req, res, url) {
+  const code = url.searchParams.get("code");
+  let payload = null;
+  if (code) {
+    try {
+      if (gcal.FAKE) payload = { type: "cal_contacts", list: FAKE_CONTACTS };
+      else {
+        const g = await gcal.guestExchange(code, guestRedirectUri());
+        payload = { type: "cal_contacts", tok: g.accessToken, exp: Date.now() + (g.expiresIn || 3600) * 1000 };
+      }
+    } catch (err) {
+      console.error(`[contacts] exchange failed: ${err.message}`);
+    }
+  }
+  const send = payload
+    ? `if (window.opener) window.opener.postMessage(${JSON.stringify(payload).replace(/</g, "\\u003c")}, location.origin);`
+    : "";
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><body>You can close this window.<script>${send}window.close();</script>`);
+}
+
 async function handleGuestCallback(req, res, url) {
   const state = url.searchParams.get("state") || "";
+  if (state === "@contacts") return handleContactsCallback(req, res, url);
   const code = url.searchParams.get("code");
   const pm = state.match(/^@public(?::([A-Za-z0-9_-]{1,32}))?$/);
   const isPublic = !!pm;

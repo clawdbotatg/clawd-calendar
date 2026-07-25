@@ -157,6 +157,18 @@ by email or ✕-remove one, and the server PATCHes the event's attendee list
 (`sendUpdates=all`, so Google emails the newcomer the invite and the
 removed guest the cancellation). No SMTP, same as everything else.
 
+Typing addresses is the default — but a "📇 Search my contacts" button
+next to the guest inputs offers Gmail-style autocomplete as a **deep
+opt-in**: nothing happens at connect time or automatically; only clicking
+the button opens a *second*, separate Google grant (contacts +
+other-contacts read scopes, in a popup so the form keeps its state).
+After that, typing a name suggests people they know. The short-lived
+token goes straight to the guest's browser, which queries the People API
+directly — the server never sees a contact and nothing is stored. Needs
+the **People API enabled** on the same Google Cloud project as the web
+OAuth client; until it is, the button still works but returns no
+suggestions.
+
 ## Admin page
 
 Set `CAL_ADMIN_PASSWORD` and `/admin/<password>` becomes a one-page admin:

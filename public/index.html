@@ -184,6 +184,14 @@
   body.skin-slop input, body.skin-slop select, body.skin-slop textarea {
     background: #060818; border-color: rgba(124,77,255,.4); }
 
+  /* contact-suggestion dropdown (deep opt-in autocomplete) */
+  .sugg { border: 1px solid var(--line); background: var(--card); margin: -8px 0 14px; }
+  .sugg .suggopt { display: block; width: 100%; text-align: left; background: none;
+                   color: var(--ink); font-weight: 400; padding: 8px 12px;
+                   border-bottom: 1px solid var(--line); }
+  .sugg .suggopt:last-child { border-bottom: 0; }
+  .sugg .suggopt:hover { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+
   /* day timeline (connected view) */
   .tl { position: relative; border: 1px solid var(--line); border-radius: 0; background: var(--bg); overflow: hidden; }
   .tlHour { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); opacity: .55; }
@@ -278,6 +286,9 @@
         <div id="guestsBox" class="hidden">
           <label>Guest emails <span style="color:var(--muted);font-weight:400">(comma-separated, up to 5 — they get the invite too)</span></label>
           <textarea id="guests" rows="2" placeholder="friend@example.com, colleague@example.com"></textarea>
+          <div id="guestSugg" class="sugg hidden"></div>
+          <button type="button" class="back" id="contactsBtn" style="display:block;margin:-6px 0 8px"
+                  title="Opens a Google permission for read-only contact search — used only to suggest addresses here, nothing is stored">📇 Search my contacts for suggestions</button>
         </div>
       </div>
       <div id="formErr" class="err"></div>
@@ -672,6 +683,101 @@
     }
   }
 
+  // ---- contact autocomplete (deep opt-in) ----
+  // Never automatic: only the 📇 button next to the add-guests inputs
+  // triggers the extra Google permission (contacts scopes, a SECOND grant
+  // separate from the calendar connect). It runs in a popup so the form
+  // keeps its state; the callback postMessages the short-lived token here,
+  // and this browser queries the People API directly — the server never
+  // sees a contact and nothing is stored beyond sessionStorage.
+  const SS_CONTACTS = "cal_contacts_tok";
+  function contactsCal() {
+    try {
+      const c = JSON.parse(sessionStorage.getItem(SS_CONTACTS));
+      if (c && (c.list || (c.tok && Date.now() < c.exp))) return c;
+    } catch {}
+    return null;
+  }
+  function startContactsAuth() {
+    const qs = manageKey
+      ? `manage=${encodeURIComponent(manageKey)}`
+      : `token=${encodeURIComponent(token || "")}&type=${encodeURIComponent(pubType)}`;
+    window.open(`/oauth/guest/start?contacts=1&${qs}`, "calContacts", "width=490,height=650");
+  }
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "cal_contacts") return;
+    try {
+      sessionStorage.setItem(SS_CONTACTS, JSON.stringify({
+        tok: e.data.tok || null, exp: e.data.exp || 0, list: e.data.list || null,
+      }));
+    } catch {}
+    searchContactsRemote(""); // empty query warms the People API search cache
+    refreshContactUis();
+  });
+  async function searchContactsRemote(q) {
+    const c = contactsCal();
+    if (!c) return [];
+    if (c.list) { // GCAL_FAKE dev mode: canned list from the server
+      const s = q.toLowerCase();
+      return c.list.filter((p) => !s || p.name.toLowerCase().includes(s) || p.email.toLowerCase().includes(s)).slice(0, 8);
+    }
+    const qs = `query=${encodeURIComponent(q)}&readMask=names,emailAddresses&pageSize=8`;
+    const h = { Authorization: `Bearer ${c.tok}` };
+    try {
+      // Saved contacts + "other contacts" (the Gmail autocomplete pool).
+      const [saved, other] = await Promise.all([
+        fetch(`https://people.googleapis.com/v1/people:searchContacts?${qs}`, { headers: h }).then((r) => r.ok ? r.json() : {}),
+        fetch(`https://people.googleapis.com/v1/otherContacts:search?${qs}`, { headers: h }).then((r) => r.ok ? r.json() : {}),
+      ]);
+      const out = [], seen = new Set();
+      for (const r of [...(saved.results || []), ...(other.results || [])]) {
+        const p = r.person || {};
+        const name = ((p.names || [])[0] || {}).displayName || "";
+        for (const em of p.emailAddresses || []) {
+          const v = String(em.value || "").trim();
+          if (!v || seen.has(v.toLowerCase())) continue;
+          seen.add(v.toLowerCase());
+          out.push({ name, email: v });
+        }
+      }
+      return out.slice(0, 8);
+    } catch { return []; }
+  }
+  // Wire an input to the dropdown: term() extracts the search text from the
+  // field, apply(email) consumes a picked suggestion.
+  function attachSuggest(input, box, term, apply) {
+    let t = 0, live = 0;
+    const close = () => { box.innerHTML = ""; box.classList.add("hidden"); };
+    input.addEventListener("input", () => {
+      clearTimeout(t);
+      const q = term();
+      if (!contactsCal() || q.length < 2) return close();
+      t = setTimeout(async () => {
+        const my = ++live;
+        const hits = await searchContactsRemote(q);
+        if (my !== live) return; // superseded by a newer keystroke
+        close();
+        if (!hits.length) return;
+        for (const hcontact of hits) {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "suggopt";
+          b.textContent = hcontact.name ? `${hcontact.name} — ${hcontact.email}` : hcontact.email;
+          b.onclick = () => { close(); apply(hcontact.email); };
+          box.appendChild(b);
+        }
+        box.classList.remove("hidden");
+      }, 250);
+    });
+    input.addEventListener("blur", () => setTimeout(close, 200)); // let a click land first
+  }
+  // Show/hide the 📇 buttons as the grant appears; both add-guests surfaces.
+  function refreshContactUis() {
+    const usable = !!(data && data.overlay);
+    $("contactsBtn").classList.toggle("hidden", !usable || !!contactsCal());
+    if (contactsCal()) $("guests").placeholder = "Type a name to search your contacts…";
+    if (!$("guestPanel").classList.contains("hidden")) renderGuestPanel();
+  }
+
   // ---- extra guests (manage mode) ----
   // A banner under "you have an appointment": who else is invited, an ✕ per
   // guest, and an email box to invite more. The server PATCHes the gcal
@@ -704,9 +810,11 @@
       chip.appendChild(x);
       row.appendChild(chip);
     }
+    let sugg = null;
     if (list.length < max) {
       const inp = document.createElement("input");
-      inp.type = "email"; inp.placeholder = "their@email.com";
+      inp.type = "email";
+      inp.placeholder = contactsCal() ? "type a name or email…" : "their@email.com";
       inp.style.cssText = "width:auto;flex:1;min-width:170px;margin:0";
       const btn = document.createElement("button");
       btn.textContent = "Invite"; btn.style.cssText = "width:auto;padding:8px 14px";
@@ -719,8 +827,24 @@
       btn.onclick = go;
       inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
       row.append(inp, btn);
+      if (data.overlay && !contactsCal()) {
+        const cb = document.createElement("button");
+        cb.type = "button"; cb.className = "back";
+        cb.textContent = "📇 search my contacts";
+        cb.title = "Opens a Google permission for read-only contact search — used only to suggest addresses here, nothing is stored";
+        cb.style.cssText = "width:auto;padding:0;margin:0";
+        cb.onclick = startContactsAuth;
+        row.appendChild(cb);
+      }
+      sugg = document.createElement("div");
+      sugg.className = "sugg hidden";
+      sugg.style.margin = "6px 0 0";
+      attachSuggest(inp, sugg, () => inp.value.trim(),
+        (email) => { inp.value = email; inp.focus(); });
     }
-    p.append(row, err);
+    p.append(row);
+    if (sugg) p.append(sugg);
+    p.append(err);
     p.classList.remove("hidden");
   }
   async function changeGuests(payload, el, err) {
@@ -907,6 +1031,7 @@
     const hasGuests = !!$("guests").value.trim();
     $("guestsBox").classList.toggle("hidden", !hasGuests);
     $("addGuestsBtn").classList.toggle("hidden", hasGuests);
+    refreshContactUis();
     if (!manageKey) ($("name").value && $("email").value ? $("bookBtn") : $("name")).focus();
   }
   $("addGuestsBtn").onclick = () => {
@@ -914,6 +1039,16 @@
     $("guestsBox").classList.remove("hidden");
     $("guests").focus();
   };
+  $("contactsBtn").onclick = startContactsAuth;
+  // Autocomplete on the guests textarea: search by the token being typed
+  // after the last separator; picking a hit completes that token.
+  attachSuggest($("guests"), $("guestSugg"),
+    () => ($("guests").value.split(/[\s,;]+/).pop() || "").trim(),
+    (email) => {
+      const m2 = $("guests").value.match(/^([\s\S]*?)([^\s,;]*)$/);
+      $("guests").value = `${m2[1]}${email}, `;
+      $("guests").focus();
+    });
   $("backBtn").onclick = () => show("picker");
   $("bookBtn").onclick = async () => {
     let name = "", email = "", guests = [];
