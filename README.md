@@ -147,6 +147,16 @@ hatch covers the second-meeting case. The invite-description link and the
 admin page's copy-reschedule-link button are how guests on a fresh browser
 get back in.
 
+## Bringing extra guests
+
+Bookings aren't solo-only. The booking form has an "+ Add guests" field
+(comma-separated emails, up to 5) — everyone lands on the Google Calendar
+event as an attendee and gets the real invite, Meet link and all. Already
+booked? The manage view shows a "👥 Also invited" panel: invite one more
+by email or ✕-remove one, and the server PATCHes the event's attendee list
+(`sendUpdates=all`, so Google emails the newcomer the invite and the
+removed guest the cancellation). No SMTP, same as everything else.
+
 ## Admin page
 
 Set `CAL_ADMIN_PASSWORD` and `/admin/<password>` becomes a one-page admin:

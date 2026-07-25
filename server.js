@@ -61,6 +61,30 @@ function rateLimit(key, max, windowMs) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Extra invitees ride the gcal event as attendees, so each address becomes a
+// real Google invite email — cap it to keep the form from being a spam
+// cannon, and fail loudly on a bad address (silently dropping one means
+// someone never gets invited).
+const MAX_EXTRA_GUESTS = 5;
+function parseGuests(raw, primaryEmail) {
+  if (raw == null) return { guests: [] };
+  if (!Array.isArray(raw)) return { error: "guests must be a list of emails" };
+  const seen = new Set([String(primaryEmail).trim().toLowerCase()]);
+  const guests = [];
+  for (const g of raw) {
+    const e = String(g || "").trim().slice(0, 200);
+    if (!e) continue;
+    if (!EMAIL_RE.test(e)) return { error: `guest email "${e.slice(0, 60)}" doesn't look valid` };
+    if (seen.has(e.toLowerCase())) continue;
+    seen.add(e.toLowerCase());
+    guests.push(e);
+  }
+  if (guests.length > MAX_EXTRA_GUESTS) return { error: `up to ${MAX_EXTRA_GUESTS} extra guests per booking` };
+  return { guests };
+}
+
 // Public-route key from client input: only sane type keys pass ("a"/empty =
 // the default type → null).
 const pubKey = (v) =>
@@ -198,8 +222,11 @@ async function handleBook(req, res) {
   const note = String(body.note || "").trim().slice(0, 1000);
   const startUtc = String(body.startUtc || "");
   if (!name) return json(res, 400, { error: "name required" });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 400, { error: "valid email required" });
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: "valid email required" });
   if (isNaN(Date.parse(startUtc))) return json(res, 400, { error: "bad start time" });
+  const pg = parseGuests(body.guests, email);
+  if (pg.error) return json(res, 400, { error: pg.error });
+  const guests = pg.guests;
 
   const result = await (bookingChain = bookingChain.catch(() => {}).then(async () => {
     // Book-time re-check: recompute fresh and require the exact slot.
@@ -224,7 +251,7 @@ async function handleBook(req, res) {
       summary, description,
       location: cfg.eventLocation || null,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
-      guestEmail: email, guestName: name,
+      guestEmail: email, guestName: name, extraEmails: guests,
       addMeet: !!cfg.addMeetLink,
     });
     // Owner-only prep block right before the event (e.g. 15 min before each
@@ -251,11 +278,11 @@ async function handleBook(req, res) {
       startUtc: slot.startUtc, endUtc: slot.endUtc,
       ownerDayKey: dayKey(Date.parse(slot.startUtc), cfg.ownerTz),
       gcalEventId: ev.id, meetLink: ev.meetLink,
-      manageKey, prepGcalEventId: prepEventId,
+      manageKey, prepGcalEventId: prepEventId, extraEmails: guests,
     });
-    console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier}${token.typeKey ? `, type ${token.typeKey}` : ""})`);
+    console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier}${token.typeKey ? `, type ${token.typeKey}` : ""})${guests.length ? ` +${guests.length} guests` : ""}`);
     notify.bookingNotify({
-      guestName: name, guestEmail: email, note,
+      guestName: name, guestEmail: email, note, extraEmails: guests,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
       typeLabel: type ? type.label : null, tokenLabel: token.label, meetLink: ev.meetLink,
     });
@@ -304,6 +331,7 @@ async function findPrepEventId(cfg, booking) {
 const bookingPublic = (b) => ({
   guestName: b.guestName, startUtc: b.startUtc, endUtc: b.endUtc,
   status: b.status, typeKey: b.typeKey || "a", meetLink: b.meetLink || null,
+  extraEmails: db.extraEmailsOf(b), maxExtraGuests: MAX_EXTRA_GUESTS,
 });
 
 async function handleManageGet(req, res, url, key) {
@@ -450,6 +478,72 @@ async function handleManageCancel(req, res, key) {
       typeLabel: type ? type.label : null, tokenLabel: access.token.label, meetLink: null,
     });
     return { code: 200, body: { ok: true } };
+  }));
+  json(res, result.code, result.body);
+}
+
+// Add or remove an extra invitee on a live booking, from its manage page.
+// Body: { add: "email" } or { remove: "email" }. The gcal attendee list is
+// replaced wholesale (primary guest + extras) with sendUpdates=all — Google
+// emails the newcomer a real invite (Meet link and all), no SMTP here.
+async function handleManageGuests(req, res, key) {
+  const ip = clientIp(req);
+  if (!rateLimit(`guests:${ip}`, 20, 3_600_000)) return json(res, 429, { error: "too many attempts, try later" });
+
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad json" }); }
+  const add = body.add != null ? String(body.add).trim().slice(0, 200) : null;
+  const remove = body.remove != null ? String(body.remove).trim().slice(0, 200) : null;
+  if (!add && !remove) return json(res, 400, { error: "add or remove required" });
+  if (add && !EMAIL_RE.test(add)) return json(res, 400, { error: "valid email required" });
+
+  const b0 = await lookupManaged(res, key);
+  if (!b0) return;
+
+  const result = await (bookingChain = bookingChain.catch(() => {}).then(async () => {
+    const fresh = db.getBookingByKey(key);
+    if (!fresh || fresh.status !== "booked") return { code: 410, body: { error: "this booking was cancelled" } };
+    if (Date.parse(fresh.startUtc) <= Date.now()) return { code: 410, body: { error: "this call already happened" } };
+
+    let extras = db.extraEmailsOf(fresh);
+    if (add) {
+      const lower = add.toLowerCase();
+      if (lower === String(fresh.guestEmail).trim().toLowerCase())
+        return { code: 400, body: { error: "that's already the booking's email" } };
+      if (extras.some((e) => e.toLowerCase() === lower))
+        return { code: 400, body: { error: "already invited" } };
+      if (extras.length >= MAX_EXTRA_GUESTS)
+        return { code: 400, body: { error: `up to ${MAX_EXTRA_GUESTS} extra guests per booking` } };
+      extras = [...extras, add];
+    } else {
+      const before = extras.length;
+      extras = extras.filter((e) => e.toLowerCase() !== remove.toLowerCase());
+      if (extras.length === before) return { code: 404, body: { error: "that guest isn't on the invite" } };
+    }
+
+    try {
+      await gcal.patchEventAttendees({
+        calendarId: accessForBooking(fresh).cfg.calendarId, eventId: fresh.gcalEventId,
+        attendees: [{ email: fresh.guestEmail, displayName: fresh.guestName }, ...extras.map((email) => ({ email }))],
+      });
+    } catch (err) {
+      if (err.status === 404 || err.status === 410) {
+        db.cancelBooking(fresh.id);
+        return { code: 410, body: { error: "this booking no longer exists on the calendar" } };
+      }
+      throw err;
+    }
+
+    db.setExtraEmails(fresh.id, extras);
+    const access = accessForBooking(fresh);
+    console.log(`[guests] ${fresh.guestName} <${fresh.guestEmail}> ${add ? `added ${add}` : `removed ${remove}`} (${extras.length} extra)`);
+    notify.bookingNotify({
+      guestName: fresh.guestName, guestEmail: fresh.guestEmail, note: null,
+      startUtc: fresh.startUtc, endUtc: fresh.endUtc,
+      addedGuest: add || undefined, removedGuest: remove || undefined,
+      typeLabel: access.type ? access.type.label : null, tokenLabel: access.token.label, meetLink: null,
+    });
+    return { code: 200, body: { ok: true, extraEmails: extras } };
   }));
   json(res, result.code, result.body);
 }
@@ -717,11 +811,12 @@ const server = http.createServer(async (req, res) => {
       return await handleSlots(req, res, url);
     }
     if (url.pathname === "/api/book" && req.method === "POST") return await handleBook(req, res);
-    const mg = url.pathname.match(/^\/api\/manage\/([A-Za-z0-9_-]{1,64})(\/reschedule|\/cancel)?$/);
+    const mg = url.pathname.match(/^\/api\/manage\/([A-Za-z0-9_-]{1,64})(\/reschedule|\/cancel|\/guests)?$/);
     if (mg) {
       if (!mg[2] && req.method === "GET") return await handleManageGet(req, res, url, mg[1]);
       if (mg[2] === "/reschedule" && req.method === "POST") return await handleManageReschedule(req, res, mg[1]);
       if (mg[2] === "/cancel" && req.method === "POST") return await handleManageCancel(req, res, mg[1]);
+      if (mg[2] === "/guests" && req.method === "POST") return await handleManageGuests(req, res, mg[1]);
       return json(res, 404, { error: "not found" });
     }
     if (url.pathname.startsWith("/api/admin/")) return await handleAdminApi(req, res, url);

@@ -75,3 +75,33 @@ test("manage keys: minted on booking, looked up, rescheduled", () => {
     ownerDayKey: "2099-01-08",
   }), false);
 });
+
+test("extraEmails round-trips through logBooking and setExtraEmails", () => {
+  db.open();
+  const id = db.logBooking({
+    token: "normal-pw", guestName: "Grace", guestEmail: "grace@example.com",
+    startUtc: "2099-02-01T17:00:00.000Z", endUtc: "2099-02-01T18:00:00.000Z",
+    ownerDayKey: "2099-02-01", extraEmails: ["ada@example.com", "alan@example.com"],
+  });
+  const key = db.listBookings().find((b) => b.id === id).manageKey;
+  assert.deepEqual(db.extraEmailsOf(db.getBookingByKey(key)), ["ada@example.com", "alan@example.com"]);
+
+  // Update replaces the list; empty list stores NULL; parse is defensive.
+  assert.ok(db.setExtraEmails(id, ["ada@example.com"]));
+  assert.deepEqual(db.extraEmailsOf(db.getBookingByKey(key)), ["ada@example.com"]);
+  assert.ok(db.setExtraEmails(id, []));
+  assert.equal(db.getBookingByKey(key).extraEmails, null);
+  assert.deepEqual(db.extraEmailsOf(db.getBookingByKey(key)), []);
+  assert.deepEqual(db.extraEmailsOf({ extraEmails: "not-json{" }), []);
+
+  // No guests at booking time → NULL, and cancelled bookings can't be edited.
+  const id2 = db.logBooking({
+    token: "normal-pw", guestName: "Solo", guestEmail: "solo@example.com",
+    startUtc: "2099-02-02T17:00:00.000Z", endUtc: "2099-02-02T18:00:00.000Z",
+    ownerDayKey: "2099-02-02",
+  });
+  const key2 = db.listBookings().find((b) => b.id === id2).manageKey;
+  assert.equal(db.getBookingByKey(key2).extraEmails, null);
+  db.cancelBooking(id2);
+  assert.equal(db.setExtraEmails(id2, ["x@y.zz"]), false);
+});

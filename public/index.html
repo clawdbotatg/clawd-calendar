@@ -226,6 +226,7 @@
     <pre id="heroAscii" class="hero hidden"></pre>
     <div id="goldBanner" class="banner hidden"></div>
     <div id="myBooking" class="banner hidden"></div>
+    <div id="guestPanel" class="banner hidden"></div>
     <div id="connectBar" class="connecthero hidden"></div>
     <div class="layout">
       <aside class="pane info">
@@ -273,6 +274,11 @@
         <input id="name" autocomplete="name" placeholder="Ada Lovelace">
         <label>Email</label>
         <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+        <button type="button" class="back" id="addGuestsBtn" style="display:block;margin-bottom:8px">👥 + Add guests</button>
+        <div id="guestsBox" class="hidden">
+          <label>Guest emails <span style="color:var(--muted);font-weight:400">(comma-separated, up to 5 — they get the invite too)</span></label>
+          <textarea id="guests" rows="2" placeholder="friend@example.com, colleague@example.com"></textarea>
+        </div>
       </div>
       <div id="formErr" class="err"></div>
       <button id="bookBtn">Book it</button>
@@ -666,6 +672,79 @@
     }
   }
 
+  // ---- extra guests (manage mode) ----
+  // A banner under "you have an appointment": who else is invited, an ✕ per
+  // guest, and an email box to invite more. The server PATCHes the gcal
+  // attendee list — Google emails the newcomer the real invite.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  function renderGuestPanel() {
+    const p = $("guestPanel");
+    if (!manageKey || !data.booking || !data.reschedulable) return p.classList.add("hidden");
+    const list = data.booking.extraEmails || [];
+    const max = data.booking.maxExtraGuests || 5;
+    p.innerHTML = "";
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;align-items:center";
+    const lbl = document.createElement("span");
+    lbl.textContent = list.length ? "👥 Also invited:" : "👥 Bringing someone? Invite them:";
+    row.appendChild(lbl);
+    const err = document.createElement("div");
+    err.className = "err"; err.style.cssText = "min-height:0;margin:4px 0 0";
+    for (const e of list) {
+      const chip = document.createElement("span");
+      chip.style.cssText = "border:1px solid var(--line);background:var(--card);padding:2px 8px;white-space:nowrap";
+      chip.textContent = `${e} `;
+      const x = document.createElement("a");
+      x.href = "#"; x.textContent = "✕"; x.title = `Remove ${e} from the invite`;
+      x.onclick = (ev) => {
+        ev.preventDefault();
+        if (confirm(`Remove ${e} from this invite? They'll get a cancellation email.`))
+          changeGuests({ remove: e }, x, err);
+      };
+      chip.appendChild(x);
+      row.appendChild(chip);
+    }
+    if (list.length < max) {
+      const inp = document.createElement("input");
+      inp.type = "email"; inp.placeholder = "their@email.com";
+      inp.style.cssText = "width:auto;flex:1;min-width:170px;margin:0";
+      const btn = document.createElement("button");
+      btn.textContent = "Invite"; btn.style.cssText = "width:auto;padding:8px 14px";
+      const go = () => {
+        const v = inp.value.trim();
+        if (!EMAIL_RE.test(v)) { err.textContent = "Valid email required."; return; }
+        err.textContent = "";
+        changeGuests({ add: v }, btn, err);
+      };
+      btn.onclick = go;
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      row.append(inp, btn);
+    }
+    p.append(row, err);
+    p.classList.remove("hidden");
+  }
+  async function changeGuests(payload, el, err) {
+    const was = el.textContent;
+    el.textContent = "…";
+    try {
+      const r = await fetch(`/api/manage/${encodeURIComponent(manageKey)}/guests`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        el.textContent = was;
+        err.textContent = j.error || "Couldn't update guests — try again.";
+        return;
+      }
+      data.booking.extraEmails = j.extraEmails;
+      renderGuestPanel(); // re-render: fresh chips, cleared input
+    } catch {
+      el.textContent = was;
+      err.textContent = "Network error — try again.";
+    }
+  }
+
   // This browser's remembered booking for the route's event type, verified
   // against the server (stale entries pruned — cancelled, already happened,
   // or the event was deleted). Soonest upcoming wins. Returns its manage
@@ -791,6 +870,7 @@
     } else {
       $("myBooking").classList.add("hidden");
     }
+    renderGuestPanel(); // hides itself outside manage mode
     tzOptions();
     renderConnectBar();
     $("vList").onclick = () => setViewMode("list");
@@ -822,15 +902,29 @@
       }
     }
     $("formErr").textContent = "";
+    // Keep the guests box open if they already typed into it (e.g. bounced
+    // off a 409 and came back); otherwise start collapsed.
+    const hasGuests = !!$("guests").value.trim();
+    $("guestsBox").classList.toggle("hidden", !hasGuests);
+    $("addGuestsBtn").classList.toggle("hidden", hasGuests);
     if (!manageKey) ($("name").value && $("email").value ? $("bookBtn") : $("name")).focus();
   }
+  $("addGuestsBtn").onclick = () => {
+    $("addGuestsBtn").classList.add("hidden");
+    $("guestsBox").classList.remove("hidden");
+    $("guests").focus();
+  };
   $("backBtn").onclick = () => show("picker");
   $("bookBtn").onclick = async () => {
-    let name = "", email = "";
+    let name = "", email = "", guests = [];
     if (!manageKey) {
       name = $("name").value.trim(); email = $("email").value.trim();
       if (!name) return $("formErr").textContent = "Name required.";
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $("formErr").textContent = "Valid email required.";
+      if (!EMAIL_RE.test(email)) return $("formErr").textContent = "Valid email required.";
+      guests = $("guests").value.split(/[\s,;]+/).filter(Boolean);
+      const bad = guests.find((g) => !EMAIL_RE.test(g));
+      if (bad) return $("formErr").textContent = `Guest email "${bad}" doesn't look right.`;
+      if (guests.length > 5) return $("formErr").textContent = "Up to 5 extra guests per booking.";
     }
     $("bookBtn").disabled = true; $("bookBtn").textContent = manageKey ? "Moving…" : "Booking…";
     try {
@@ -838,7 +932,7 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(manageKey
           ? { startUtc: selected.startUtc }
-          : { token: token || "", type: pubType, startUtc: selected.startUtc, name, email }),
+          : { token: token || "", type: pubType, startUtc: selected.startUtc, name, email, guests }),
       });
       const j = await r.json();
       if (!r.ok) {
