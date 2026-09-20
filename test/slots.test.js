@@ -167,6 +167,27 @@ test("prep block keeps a slot clear of busy events right before it", () => {
   assert.ok(starts.includes(mtnIso(7, 10, 30)), "10:30 ok — prep 10:00–10:30 is clear");
 });
 
+test("wrap block keeps a slot clear of busy events right after it (15 before + 60 + 15 after)", () => {
+  // Busy Tue 11:00–12:00. Slop = 15 prep + 60 + 15 wrap. A 10:00 slot ends
+  // 11:00 and its wrap (11:00–11:15) hits the meeting — gone. 9:30 ends
+  // 10:30, wrap 10:30–10:45 is clear — fine. After the meeting, 12:00 needs
+  // prep 11:45 — blocked; 12:30 (prep 12:15) is the first open start.
+  const cfg = applyType({ ...CONFIG, ownerName: "x" },
+    { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 15 });
+  assert.equal(cfg.wrapMinutes, 15);
+  assert.equal(cfg.bufferAfterMinutes, 15, "after-buffer grows to cover the wrap block");
+  const busy = [{ start: mtnIso(7, 11), end: mtnIso(7, 12) }];
+  const starts = startsOn(getOpenSlots({ config: cfg, token: null, busy, bookedByDay: {}, now: NOW }), 7);
+  assert.ok(!starts.includes(mtnIso(7, 10, 0)), "10:00 blocked — wrap would overlap the 11–12 meeting");
+  assert.ok(starts.includes(mtnIso(7, 9, 30)), "9:30 ok — wrap 10:30–10:45 is clear");
+  assert.ok(!starts.includes(mtnIso(7, 12, 0)), "12:00 blocked — prep would overlap");
+  assert.ok(starts.includes(mtnIso(7, 12, 30)), "12:30 ok");
+  // No wrap on the type → 10:00 is back (ends exactly when the meeting starts).
+  const plain = applyType({ ...CONFIG, ownerName: "x" }, { key: "q", label: "Q", prepMinutes: 15 });
+  assert.equal(plain.wrapMinutes, 0);
+  assert.ok(startsOn(getOpenSlots({ config: plain, token: null, busy, bookedByDay: {}, now: NOW }), 7).includes(mtnIso(7, 10, 0)));
+});
+
 test("typed config drives slots: 30-min office hours only on Friday 2–4pm", () => {
   const type = { label: "Office Hours", durationMin: 30, stepMinutes: 30,
     window: { days: ["fri"], start: "14:00", end: "16:00" }, dailyCap: 4 };
@@ -205,6 +226,7 @@ test("titledDayCounts: events named like the type spend their day", () => {
       description: "recording — slop.computer with a guest", start: mtnIso(13, 10) },
     { id: "7", summary: "Prepare: episode",                                   // prep excluded even via desc
       description: '15-min prep before "SLOP.COMPUTER"', start: mtnIso(13, 9, 45) },
+    { id: "8", summary: "Wrap up: SLOP.COMPUTER", start: mtnIso(8, 17) },     // wrap companion — excluded
   ];
   assert.deepEqual(titledDayCounts(events, "SLOP.COMPUTER", TZ),
     { "2026-07-08": 1, "2026-07-09": 1, "2026-07-10": 1, "2026-07-13": 1 });

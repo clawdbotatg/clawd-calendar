@@ -52,7 +52,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const key = flag("key");
 if (!label || !key) {
-  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"] [--event-desc <invite text>] [--location <URL or place>] [--prep <min before, owner-only block>] [--meet|--no-meet] [--avatar </img.png>] [--skin <name>] [--ascii-file <path — banner shown above the picker>]');
+  console.error('usage: node scripts/types.js "<label>" --key <route> [--duration <min>] [--step <min>] [--days mon,tue] [--start HH:MM] [--end HH:MM] [--daily-cap <n>] [--min-notice <hours>] [--max-days <n>] [--title <page title>] [--subtitle <line>] [--desc <text>] [--accent "#rrggbb"] [--event-title "Chat: {name}"] [--event-desc <invite text>] [--location <URL or place>] [--prep <min before, owner-only block>] [--wrap <min after, owner-only block>] [--meet|--no-meet] [--avatar </img.png>] [--skin <name>] [--ascii-file <path — banner shown above the picker>]');
   process.exit(1);
 }
 if (!/^[a-z0-9_-]{1,32}$/.test(key)) { console.error(`bad key "${key}" — lowercase letters/digits/-/_ only`); process.exit(1); }
@@ -78,6 +78,7 @@ db.createType({
   eventDescription: flag("event-desc"),
   eventLocation: flag("location"),
   prepMinutes: flag("prep") ? +flag("prep") : null,
+  wrapMinutes: flag("wrap") ? +flag("wrap") : null,
   addMeet: has("no-meet") ? false : has("meet") ? true : null,
   pageTitle: flag("title"),
   pageSubtitle: flag("subtitle"),

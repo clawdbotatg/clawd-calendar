@@ -133,7 +133,7 @@ function mergeMaxCounts(a, b) {
 //      episodes included, "Prepare:" blocks excluded) counts toward the
 //      type's daily cap.
 // `exclude` (a booking row) = a reschedule in progress: that guest's own
-// event — and its prep block — must not block their new pick, so its busy
+// event — and its prep + wrap blocks — must not block their new pick, so its busy
 // interval is carved out and its day-cap contribution decremented.
 async function computeSlots({ token, cfg }, { now = Date.now(), exclude = null } = {}) {
   const horizonMs = (cfg.maxDaysOut + 2) * 86_400_000;
@@ -156,7 +156,7 @@ async function computeSlots({ token, cfg }, { now = Date.now(), exclude = null }
   if (exclude)
     busy = subtractBusy(busy,
       Date.parse(exclude.startUtc) - (cfg.prepMinutes || 0) * 60_000,
-      Date.parse(exclude.endUtc));
+      Date.parse(exclude.endUtc) + (cfg.wrapMinutes || 0) * 60_000);
   const titled = titledDayCounts(events, cfg.eventTitle, cfg.ownerTz);
   const booked = db.bookedByDay(token.typeKey || null);
   let counts = titled ? mergeMaxCounts(booked, titled) : booked;
@@ -273,12 +273,29 @@ async function handleBook(req, res) {
         console.error(`[book] prep event failed (booking kept): ${err.message}`);
       }
     }
+    // Owner-only wrap-up block right after (e.g. 15 min to finish an
+    // episode). Same best-effort rule as prep.
+    let wrapEventId = null;
+    if (cfg.wrapMinutes > 0) {
+      try {
+        const wrap = await gcal.createOwnerEvent({
+          calendarId: cfg.calendarId,
+          summary: `Wrap up: ${summary}`,
+          description: `${cfg.wrapMinutes}-min wrap-up after "${summary}" with ${name} <${email}>.`,
+          startUtc: slot.endUtc,
+          endUtc: new Date(Date.parse(slot.endUtc) + cfg.wrapMinutes * 60_000).toISOString(),
+        });
+        wrapEventId = wrap.id;
+      } catch (err) {
+        console.error(`[book] wrap event failed (booking kept): ${err.message}`);
+      }
+    }
     db.logBooking({
       token: token.token, typeKey: token.typeKey || null, guestName: name, guestEmail: email, note,
       startUtc: slot.startUtc, endUtc: slot.endUtc,
       ownerDayKey: dayKey(Date.parse(slot.startUtc), cfg.ownerTz),
       gcalEventId: ev.id, meetLink: ev.meetLink,
-      manageKey, prepGcalEventId: prepEventId, extraEmails: guests,
+      manageKey, prepGcalEventId: prepEventId, wrapGcalEventId: wrapEventId, extraEmails: guests,
     });
     console.log(`[book] ${name} <${email}> ${slot.startUtc} via "${token.label}" (${token.tier}${token.typeKey ? `, type ${token.typeKey}` : ""})${guests.length ? ` +${guests.length} guests` : ""}`);
     notify.bookingNotify({
@@ -314,18 +331,72 @@ async function lookupManaged(res, key) {
   return b;
 }
 
-// The booking's "Prepare:" companion event, if we can identify it. Stored id
-// first; legacy bookings (pre-reschedule) are found by summary + start time
-// in a tight calendar window around the old prep slot.
-async function findPrepEventId(cfg, booking) {
-  if (booking.prepGcalEventId) return booking.prepGcalEventId;
-  if (!(cfg.prepMinutes > 0)) return null;
-  const prepStart = Date.parse(booking.startUtc) - cfg.prepMinutes * 60_000;
+// The booking's owner-only companion events ("Prepare:" before, "Wrap up:"
+// after), if we can identify them. Stored id first; legacy bookings (pre-
+// reschedule) are found by summary + start time in a tight calendar window
+// around where the block should sit. Each kind knows where its block goes
+// relative to a booking interval, so book/reschedule/cancel share one path.
+const COMPANIONS = {
+  prep: {
+    idCol: "prepGcalEventId", minutes: (cfg) => cfg.prepMinutes || 0, prefix: "Prepare:",
+    span: (cfg, startUtc) => [Date.parse(startUtc) - cfg.prepMinutes * 60_000, Date.parse(startUtc)],
+    describe: (cfg, b) => `${cfg.prepMinutes}-min prep with ${b.guestName} <${b.guestEmail}>.`,
+    setId: (id, evId) => db.setPrepEventId(id, evId),
+  },
+  wrap: {
+    idCol: "wrapGcalEventId", minutes: (cfg) => cfg.wrapMinutes || 0, prefix: "Wrap up:",
+    span: (cfg, _startUtc, endUtc) => [Date.parse(endUtc), Date.parse(endUtc) + cfg.wrapMinutes * 60_000],
+    describe: (cfg, b) => `${cfg.wrapMinutes}-min wrap-up with ${b.guestName} <${b.guestEmail}>.`,
+    setId: (id, evId) => db.setWrapEventId(id, evId),
+  },
+};
+async function findCompanionEventId(kind, cfg, booking) {
+  const k = COMPANIONS[kind];
+  if (booking[k.idCol]) return booking[k.idCol];
+  if (!(k.minutes(cfg) > 0)) return null;
+  const [blockStart] = k.span(cfg, booking.startUtc, booking.endUtc);
   const evs = await gcal.listEvents(cfg.calendarId,
-    new Date(prepStart - 60_000).toISOString(), new Date(prepStart + 60_000).toISOString());
+    new Date(blockStart - 60_000).toISOString(), new Date(blockStart + 60_000).toISOString());
   const hit = (evs || []).find((e) =>
-    String(e.summary || "").startsWith("Prepare:") && e.start && Date.parse(e.start) === prepStart);
+    String(e.summary || "").startsWith(k.prefix) && e.start && Date.parse(e.start) === blockStart);
   return hit ? hit.id : null;
+}
+const findPrepEventId = (cfg, b) => findCompanionEventId("prep", cfg, b);
+
+// Move (or recreate) one companion block to follow a rescheduled booking.
+// Best-effort, like at booking time: the guest's event already moved.
+async function moveCompanion(kind, cfg, booking, slot) {
+  const k = COMPANIONS[kind];
+  if (!(k.minutes(cfg) > 0)) return;
+  const [s, e] = k.span(cfg, slot.startUtc, slot.endUtc);
+  const startUtc = new Date(s).toISOString(), endUtc = new Date(e).toISOString();
+  try {
+    let id = await findCompanionEventId(kind, cfg, booking);
+    if (id) {
+      await gcal.patchEventTime({ calendarId: cfg.calendarId, eventId: id, startUtc, endUtc, sendUpdates: "none" });
+    } else {
+      const ev = await gcal.createOwnerEvent({
+        calendarId: cfg.calendarId,
+        summary: `${k.prefix} ${(cfg.eventTitle || "Call: {name}").replace("{name}", booking.guestName)}`,
+        description: k.describe(cfg, booking),
+        startUtc, endUtc,
+      });
+      id = ev.id;
+    }
+    if (id !== booking[k.idCol]) k.setId(booking.id, id);
+  } catch (err) {
+    console.error(`[reschedule] ${kind} move failed (booking moved anyway): ${err.message}`);
+  }
+}
+
+// Delete one companion block quietly (owner-only, no attendees). Best-effort.
+async function deleteCompanion(kind, cfg, booking) {
+  try {
+    const id = await findCompanionEventId(kind, cfg, booking);
+    if (id) await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: id, sendUpdates: "none" });
+  } catch (err) {
+    console.error(`[cancel] ${kind} delete failed (booking cancelled anyway): ${err.message}`);
+  }
 }
 
 const bookingPublic = (b) => ({
@@ -401,30 +472,9 @@ async function handleManageReschedule(req, res, key) {
       throw err;
     }
 
-    // Move the owner's prep block too (best-effort, like at booking time).
-    if (cfg.prepMinutes > 0) {
-      const prepStart = new Date(Date.parse(slot.startUtc) - cfg.prepMinutes * 60_000).toISOString();
-      try {
-        let prepId = await findPrepEventId(cfg, fresh);
-        if (prepId) {
-          await gcal.patchEventTime({
-            calendarId: cfg.calendarId, eventId: prepId,
-            startUtc: prepStart, endUtc: slot.startUtc, sendUpdates: "none",
-          });
-        } else {
-          const prep = await gcal.createOwnerEvent({
-            calendarId: cfg.calendarId,
-            summary: `Prepare: ${(cfg.eventTitle || "Call: {name}").replace("{name}", fresh.guestName)}`,
-            description: `${cfg.prepMinutes}-min prep with ${fresh.guestName} <${fresh.guestEmail}>.`,
-            startUtc: prepStart, endUtc: slot.startUtc,
-          });
-          prepId = prep.id;
-        }
-        if (prepId !== fresh.prepGcalEventId) db.setPrepEventId(fresh.id, prepId);
-      } catch (err) {
-        console.error(`[reschedule] prep move failed (booking moved anyway): ${err.message}`);
-      }
-    }
+    // Move the owner's prep + wrap blocks too.
+    await moveCompanion("prep", cfg, fresh, slot);
+    await moveCompanion("wrap", cfg, fresh, slot);
 
     db.rescheduleBooking(fresh.id, {
       startUtc: slot.startUtc, endUtc: slot.endUtc,
@@ -461,13 +511,9 @@ async function handleManageCancel(req, res, key) {
     if (b.gcalEventId)
       await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: b.gcalEventId });
 
-    // The prep block goes quietly (owner-only, no attendees). Best-effort.
-    try {
-      const prepId = await findPrepEventId(cfg, b);
-      if (prepId) await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: prepId, sendUpdates: "none" });
-    } catch (err) {
-      console.error(`[cancel] prep delete failed (booking cancelled anyway): ${err.message}`);
-    }
+    // The prep + wrap blocks go quietly (owner-only, no attendees).
+    await deleteCompanion("prep", cfg, b);
+    await deleteCompanion("wrap", cfg, b);
 
     db.cancelBooking(b.id);
     const type = access.type;
@@ -761,6 +807,7 @@ async function handleAdminApi(req, res, url) {
       eventDescription: body.eventDescription ? String(body.eventDescription).slice(0, 4000) : null,
       eventLocation: body.eventLocation ? String(body.eventLocation).slice(0, 500) : null,
       prepMinutes: optNum(body.prepMinutes),
+      wrapMinutes: optNum(body.wrapMinutes),
       addMeet: body.addMeet == null || body.addMeet === "" ? null : !!+body.addMeet,
       pageTitle: body.pageTitle ? String(body.pageTitle).slice(0, 200) : null,
       pageSubtitle: body.pageSubtitle ? String(body.pageSubtitle).slice(0, 200) : null,

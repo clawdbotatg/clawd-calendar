@@ -96,7 +96,9 @@ A type can also customize the **calendar invite itself**: custom
 description text (`--event-desc`), a location (`--location`), Meet link
 on/off (`--meet`/`--no-meet`), and a **prep block** (`--prep 15` — an
 owner-only "Prepare: …" event created on the calendar right before each
-booking; the slot search keeps that gap clear of busy events).
+booking; the slot search keeps that gap clear of busy events) and a
+**wrap-up block** (`--wrap 15` — the same thing after: an owner-only
+"Wrap up: …" event, and no slot may end within that gap of a busy event).
 For a fully custom look a type can carry a per-type avatar (`--avatar`),
 an ASCII banner rendered above the picker (`--ascii-file`), and a named
 **skin** (`--skin`) — a CSS theme in `index.html` (e.g. `slop`).
@@ -139,8 +141,8 @@ plain route), the page flips into manage mode: it opens on their booked
 month/day with their slot marked blue, the banner reads "you have an
 appointment — select a different time to reschedule, or cancel", and
 picking any slot moves the Google Calendar event in place (guests get the
-update email; the owner's prep block moves too). Cancel deletes the event
-+ prep block, emails the cancellation, and frees the day for the cap.
+update email; the owner's prep + wrap blocks move too). Cancel deletes the
+event + prep/wrap blocks, emails the cancellation, and frees the day for the cap.
 Their own event never blocks a new pick: its busy time and its daily-cap
 day are excluded while they choose. A "booking a separate call" escape
 hatch covers the second-meeting case. The invite-description link and the

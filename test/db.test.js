@@ -44,7 +44,7 @@ test("manage keys: minted on booking, looked up, rescheduled", () => {
   const id = db.logBooking({
     token: "pw1", guestName: "Ada", guestEmail: "ada@example.com",
     startUtc: "2099-01-05T17:00:00.000Z", endUtc: "2099-01-05T18:00:00.000Z",
-    ownerDayKey: "2099-01-05", gcalEventId: "ev1", prepGcalEventId: "prep1",
+    ownerDayKey: "2099-01-05", gcalEventId: "ev1", prepGcalEventId: "prep1", wrapGcalEventId: "wrap1",
   });
 
   // A key was minted automatically and resolves back to the booking.
@@ -53,6 +53,7 @@ test("manage keys: minted on booking, looked up, rescheduled", () => {
   const b = db.getBookingByKey(row.manageKey);
   assert.equal(b.id, id);
   assert.equal(b.prepGcalEventId, "prep1");
+  assert.equal(b.wrapGcalEventId, "wrap1");
   assert.equal(db.getBookingByKey("nope"), null);
   assert.equal(db.getBookingByKey(null), null);
 
@@ -69,6 +70,8 @@ test("manage keys: minted on booking, looked up, rescheduled", () => {
   // The key survives (same link keeps working); cancelled bookings don't move.
   db.setPrepEventId(id, "prep2");
   assert.equal(db.getBookingByKey(row.manageKey).prepGcalEventId, "prep2");
+  db.setWrapEventId(id, "wrap2");
+  assert.equal(db.getBookingByKey(row.manageKey).wrapGcalEventId, "wrap2");
   db.cancelBooking(id);
   assert.equal(db.rescheduleBooking(id, {
     startUtc: "2099-01-08T17:00:00.000Z", endUtc: "2099-01-08T18:00:00.000Z",
