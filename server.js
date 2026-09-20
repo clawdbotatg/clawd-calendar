@@ -361,11 +361,22 @@ async function findCompanionEventId(kind, cfg, booking) {
 
 // Move one companion block to follow a rescheduled booking; recreate it when
 // there is none, or when the stored one is gone from the calendar (404/410
-// on the move — someone deleted the block by hand). Best-effort, like at
+// on the move — someone deleted the block by hand). If the type no longer
+// has this block (duration set to 0 since the booking), the stored one is
+// deleted instead of left orphaned at the old time. Best-effort, like at
 // booking time: the guest's event already moved.
 async function moveCompanion(kind, cfg, booking, slot) {
   const k = COMPANIONS[kind];
-  if (!(k.minutes(cfg) > 0)) return;
+  if (!(k.minutes(cfg) > 0)) {
+    if (!booking[k.idCol]) return;
+    try {
+      await gcal.deleteEvent({ calendarId: cfg.calendarId, eventId: booking[k.idCol], sendUpdates: "none" });
+      k.setId(booking.id, null);
+    } catch (err) {
+      console.error(`[reschedule] ${kind} block delete failed (type no longer has one): ${err.message}`);
+    }
+    return;
+  }
   const [s, e] = companionSpan(kind, cfg, slot.startUtc, slot.endUtc);
   const startUtc = new Date(s).toISOString(), endUtc = new Date(e).toISOString();
   const create = async () => (await gcal.createOwnerEvent({

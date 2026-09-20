@@ -332,3 +332,49 @@ test("companionMatches: prefix + exact start + guest email, never time alone", (
   assert.ok(companionMatches({ ...ok, summary: "Prepare: SLOP.COMPUTER", start: mtnIso(7, 9, 45) }, "prep", cfg, b));
   assert.ok(!companionMatches(ok, "prep", cfg, b), "a wrap block is not a prep block");
 });
+
+test("excludeBookingBusy: an all-day busy event (vacation) is restored inside the carve", () => {
+  // Codex round-2 repro: booking 10–11 on a day that later became an all-day
+  // busy vacation. free/busy reports the whole day; the carve must not open
+  // a hole around the booking.
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 15 });
+  const booking = { gcalEventId: "ev1", guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  const dayStart = new Date(zonedToUtc(2026, 7, 7, 0, 0, TZ)).toISOString();
+  const dayEnd = new Date(zonedToUtc(2026, 7, 8, 0, 0, TZ)).toISOString();
+  const busy = [{ start: dayStart, end: dayEnd }];
+  const events = [
+    { id: "ev1", summary: "SLOP.COMPUTER", start: mtnIso(7, 10), end: mtnIso(7, 11) },
+    { id: "vac", summary: "Vacation", day: "2026-07-07", endDay: "2026-07-08" },
+  ];
+  const out = excludeBookingBusy(busy, events, booking, cfg);
+  const starts = startsOn(getOpenSlots({ config: cfg, token: null, busy: out, bookedByDay: {}, now: NOW }), 7);
+  assert.deepEqual(starts, [], "nothing on a vacation day, not even next to the old slot");
+  // A free (transparent) all-day event — the Google default — restores
+  // nothing: plain carve, the day block split around [9:45, 11:15], so only
+  // the guest's current 10:00 start fits (the server filters that one out).
+  const outFree = excludeBookingBusy(busy, [events[0], { ...events[1], free: true }], booking, cfg);
+  assert.equal(outFree.length, 2);
+  assert.deepEqual(startsOn(getOpenSlots({ config: cfg, token: null, busy: outFree, bookedByDay: {}, now: NOW }), 7), [mtnIso(7, 10)]);
+});
+
+test("excludeBookingBusy: restored time is clipped to what free/busy reported (declined invites stay free)", () => {
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 15 });
+  const booking = { gcalEventId: "ev1", guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  // The owner declined "Standup" 10:30–11:00: it's on the calendar but
+  // free/busy doesn't count it, so busy holds only the booking itself.
+  const busy = [{ start: mtnIso(7, 10), end: mtnIso(7, 11) }];
+  const events = [
+    { id: "ev1", summary: "SLOP.COMPUTER", start: mtnIso(7, 10), end: mtnIso(7, 11) },
+    { id: "declined", summary: "Standup", start: mtnIso(7, 10, 30), end: mtnIso(7, 11), declined: true },
+  ];
+  assert.deepEqual(excludeBookingBusy(busy, events, booking, cfg), [], "no busy time invented");
+  // Without the declined flag the clip alone can't tell it from the booking's own busy time
+  // (freeBusy merges them) — that's why listEvents carries attendee self-status.
+  assert.equal(excludeBookingBusy(busy, [events[0], { ...events[1], declined: false }], booking, cfg).length, 1);
+  // An event free/busy never reported (outside the busy list entirely) is never restored.
+  assert.deepEqual(excludeBookingBusy([], events, booking, cfg), []);
+  // Partial overlap with real busy time is clipped, not whole-event.
+  const busy2 = [{ start: mtnIso(7, 10), end: mtnIso(7, 11, 5) }];
+  const events2 = [events[0], { id: "m", summary: "Meeting", start: mtnIso(7, 11), end: mtnIso(7, 11, 30) }];
+  assert.deepEqual(excludeBookingBusy(busy2, events2, booking, cfg), [{ start: mtnIso(7, 11), end: mtnIso(7, 11, 5) }]);
+});

@@ -84,3 +84,26 @@ test("legacy lookup: a same-time 'Wrap up:' block for ANOTHER guest is never tou
   } finally { Object.assign(gcal, { listEvents: orig.list, deleteEvent: orig.del }); }
   assert.deepEqual(deleted, ["ours"]);
 });
+
+test("moveCompanion: type's wrap turned off since booking → stored block deleted, id cleared", async () => {
+  const b = booking({ wrapGcalEventId: "wrap-old", prepGcalEventId: "prep-old" });
+  const calls = [];
+  const orig = { del: gcal.deleteEvent, patch: gcal.patchEventTime, create: gcal.createOwnerEvent };
+  gcal.deleteEvent = async (o) => { calls.push(["delete", o.eventId, o.sendUpdates]); };
+  gcal.patchEventTime = async (o) => { calls.push(["patch", o.eventId]); };
+  gcal.createOwnerEvent = async () => { calls.push(["create"]); return { id: "x" }; };
+  try {
+    await moveCompanion("prep", { ...cfg, wrapMinutes: 0 }, b, slot);
+    await moveCompanion("wrap", { ...cfg, wrapMinutes: 0 }, b, slot);
+  } finally { Object.assign(gcal, { deleteEvent: orig.del, patchEventTime: orig.patch, createOwnerEvent: orig.create }); }
+  assert.deepEqual(calls, [["patch", "prep-old"], ["delete", "wrap-old", "none"]]);
+  const fresh = db.getBookingByKey(b.manageKey);
+  assert.equal(fresh.wrapGcalEventId, null);
+  assert.equal(fresh.prepGcalEventId, "prep-old");
+  // No stored id + wrap off → nothing to do, no calls.
+  const b2 = booking({ wrapGcalEventId: null });
+  calls.length = 0;
+  gcal.deleteEvent = async (o) => { calls.push(["delete", o.eventId]); };
+  try { await moveCompanion("wrap", { ...cfg, wrapMinutes: 0 }, b2, slot); } finally { gcal.deleteEvent = orig.del; }
+  assert.deepEqual(calls, []);
+});
