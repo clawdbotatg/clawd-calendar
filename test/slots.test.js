@@ -378,3 +378,28 @@ test("excludeBookingBusy: restored time is clipped to what free/busy reported (d
   const events2 = [events[0], { id: "m", summary: "Meeting", start: mtnIso(7, 11), end: mtnIso(7, 11, 30) }];
   assert.deepEqual(excludeBookingBusy(busy2, events2, booking, cfg), [{ start: mtnIso(7, 11), end: mtnIso(7, 11, 5) }]);
 });
+
+test("excludeBookingBusy: the booking's own stale companion block is carved even after the type's wrap was turned off", () => {
+  // Wrap was 15 when Ada booked 10–11 (block 11:00–11:15 still on the
+  // calendar); it's 0 now. Availability runs before the move deletes that
+  // block, so it must not fence her out of 10:30–11:30.
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 0 });
+  const booking = { gcalEventId: "ev1", prepGcalEventId: "p1", wrapGcalEventId: "w1",
+    guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  const busy = [{ start: mtnIso(7, 9, 45), end: mtnIso(7, 11, 15) }];
+  const events = [
+    { id: "ev1", summary: "SLOP.COMPUTER", start: mtnIso(7, 10), end: mtnIso(7, 11) },
+    { id: "p1", summary: "Prepare: SLOP.COMPUTER", start: mtnIso(7, 9, 45), end: mtnIso(7, 10) },
+    { id: "w1", summary: "Wrap up: SLOP.COMPUTER", start: mtnIso(7, 11), end: mtnIso(7, 11, 15) },
+  ];
+  assert.deepEqual(excludeBookingBusy(busy, events, booking, cfg), []);
+  const starts = startsOn(getOpenSlots({ config: cfg, token: null, busy: excludeBookingBusy(busy, events, booking, cfg), bookedByDay: {}, now: NOW }), 7);
+  assert.ok(starts.includes(mtnIso(7, 10, 30)), "10:30 open — the old wrap block is hers");
+  // Same when wrap grew or shrank: old 15-min block, type now 30 → carve covers both.
+  const cfg30 = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 30 });
+  assert.deepEqual(excludeBookingBusy(busy, events, booking, cfg30), []);
+  // A real meeting inside the old block's time still comes back.
+  const busy2 = [{ start: mtnIso(7, 9, 45), end: mtnIso(7, 11, 30) }];
+  const events2 = [...events, { id: "m", summary: "Meeting", start: mtnIso(7, 11, 15), end: mtnIso(7, 11, 30) }];
+  assert.deepEqual(excludeBookingBusy(busy2, events2, booking, cfg), [{ start: mtnIso(7, 11, 15), end: mtnIso(7, 11, 30) }]);
+});
