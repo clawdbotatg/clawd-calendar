@@ -272,3 +272,63 @@ test("subtractBusy carves the guest's own event out of the busy list", () => {
   const slots = run({ busy: subtractBusy(busy, mtnIso(7, 8, 45), mtnIso(7, 10)), now: NOW });
   assert.ok(startsOn(slots, 7).includes(mtnIso(7, 9)));
 });
+
+// ── reschedule carve-out + companion identification ──────────────────────
+const { excludeBookingBusy, companionMatches } = require("../lib/slots");
+
+test("excludeBookingBusy: other meetings inside the carve range stay busy", () => {
+  // Codex review repro: legacy booking Tue 10–11 (no wrap block on the
+  // calendar), unrelated meeting 11:00–11:15, wrap newly set to 15. The old
+  // carve [9:45, 11:15] swallowed the meeting and offered 10:30–11:30 on top
+  // of it. Now the meeting's busy time survives the carve.
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 15 });
+  const booking = { gcalEventId: "ev1", prepGcalEventId: "prep1", wrapGcalEventId: null,
+    guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  // freeBusy merges adjacent blocks: prep 9:45 + booking 10–11 + meeting = one 9:45–11:15 block
+  const busy = [{ start: mtnIso(7, 9, 45), end: mtnIso(7, 11, 15) }];
+  const events = [
+    { id: "ev1", summary: "SLOP.COMPUTER", start: mtnIso(7, 10), end: mtnIso(7, 11) },
+    { id: "prep1", summary: "Prepare: SLOP.COMPUTER", start: mtnIso(7, 9, 45), end: mtnIso(7, 10) },
+    { id: "mtg", summary: "Important", start: mtnIso(7, 11), end: mtnIso(7, 11, 15) },
+    { id: "ooo", summary: "Focus (free)", start: mtnIso(7, 9), end: mtnIso(7, 12), free: true },
+  ];
+  const out = excludeBookingBusy(busy, events, booking, cfg);
+  assert.deepEqual(out, [{ start: mtnIso(7, 11), end: mtnIso(7, 11, 15) }], "only the meeting remains busy");
+  const starts = startsOn(getOpenSlots({ config: cfg, token: null, busy: out, bookedByDay: {}, now: NOW }), 7);
+  assert.ok(!starts.includes(mtnIso(7, 10, 30)), "10:30–11:30 would sit on the 11:00 meeting");
+  assert.ok(!starts.includes(mtnIso(7, 10, 0)), "10:00–11:00 + wrap 11:00–11:15 hits the meeting");
+  assert.ok(starts.includes(mtnIso(7, 9, 30)), "9:30–10:30 (wrap to 10:45) is clear");
+  assert.ok(starts.includes(mtnIso(7, 11, 30)), "11:30 (prep 11:15) is clear");
+
+  // No event data → plain carve, as before.
+  assert.deepEqual(excludeBookingBusy(busy, null, booking, cfg), []);
+});
+
+test("excludeBookingBusy: the booking's own legacy companions (matched by email) are not re-added", () => {
+  const cfg = applyType({ ...CONFIG, ownerName: "x" }, { key: "slop", label: "S", prepMinutes: 15, wrapMinutes: 15 });
+  const booking = { gcalEventId: "ev1", prepGcalEventId: null, wrapGcalEventId: null,
+    guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  const busy = [{ start: mtnIso(7, 9, 45), end: mtnIso(7, 11, 15) }];
+  const events = [
+    { id: "ev1", summary: "SLOP.COMPUTER", start: mtnIso(7, 10), end: mtnIso(7, 11) },
+    { id: "p", summary: "Prepare: SLOP.COMPUTER", description: "prep with Ada <ada@example.com>.", start: mtnIso(7, 9, 45), end: mtnIso(7, 10) },
+    { id: "w", summary: "Wrap up: SLOP.COMPUTER", description: "wrap-up with Ada <ada@example.com>.", start: mtnIso(7, 11), end: mtnIso(7, 11, 15) },
+  ];
+  assert.deepEqual(excludeBookingBusy(busy, events, booking, cfg), [], "own blocks carved entirely");
+  // Someone ELSE's wrap block at the same instant is not ours: stays busy.
+  events[2].description = "wrap-up with Bob <bob@example.com>.";
+  assert.deepEqual(excludeBookingBusy(busy, events, booking, cfg), [{ start: mtnIso(7, 11), end: mtnIso(7, 11, 15) }]);
+});
+
+test("companionMatches: prefix + exact start + guest email, never time alone", () => {
+  const cfg = { prepMinutes: 15, wrapMinutes: 15 };
+  const b = { guestEmail: "ada@example.com", startUtc: mtnIso(7, 10), endUtc: mtnIso(7, 11) };
+  const ok = { summary: "Wrap up: SLOP.COMPUTER", description: '15-min wrap-up after "SLOP.COMPUTER" with Ada <ada@example.com>.', start: mtnIso(7, 11) };
+  assert.ok(companionMatches(ok, "wrap", cfg, b));
+  assert.ok(!companionMatches({ ...ok, description: "with Someone else <bob@example.com>." }, "wrap", cfg, b), "other guest");
+  assert.ok(!companionMatches({ ...ok, description: "" }, "wrap", cfg, b), "no email → no match");
+  assert.ok(!companionMatches({ ...ok, start: mtnIso(7, 11, 5) }, "wrap", cfg, b), "wrong start");
+  assert.ok(!companionMatches({ ...ok, summary: "Wrap party" }, "wrap", cfg, b), "wrong prefix");
+  assert.ok(companionMatches({ ...ok, summary: "Prepare: SLOP.COMPUTER", start: mtnIso(7, 9, 45) }, "prep", cfg, b));
+  assert.ok(!companionMatches(ok, "prep", cfg, b), "a wrap block is not a prep block");
+});

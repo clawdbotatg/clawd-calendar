@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const { getOpenSlots, effectiveRules, applyType, titledDayCounts, subtractBusy } = require("./lib/slots");
+const { getOpenSlots, effectiveRules, applyType, titledDayCounts, companionSpan, companionMatches, excludeBookingBusy } = require("./lib/slots");
 const db = require("./lib/db");
 const gcal = require("./lib/gcal");
 const notify = require("./lib/notify");
@@ -133,8 +133,9 @@ function mergeMaxCounts(a, b) {
 //      episodes included, "Prepare:" blocks excluded) counts toward the
 //      type's daily cap.
 // `exclude` (a booking row) = a reschedule in progress: that guest's own
-// event — and its prep + wrap blocks — must not block their new pick, so its busy
-// interval is carved out and its day-cap contribution decremented.
+// event — and its prep + wrap blocks — must not block their new pick, so their
+// busy time is carved out (other meetings in that range stay busy) and its
+// day-cap contribution decremented.
 async function computeSlots({ token, cfg }, { now = Date.now(), exclude = null } = {}) {
   const horizonMs = (cfg.maxDaysOut + 2) * 86_400_000;
   const rules = effectiveRules(cfg, token);
@@ -153,10 +154,7 @@ async function computeSlots({ token, cfg }, { now = Date.now(), exclude = null }
         console.log(`[reconcile] "${b.guestName}" ${b.startUtc} deleted from calendar — cancelled, day freed`);
     }
   }
-  if (exclude)
-    busy = subtractBusy(busy,
-      Date.parse(exclude.startUtc) - (cfg.prepMinutes || 0) * 60_000,
-      Date.parse(exclude.endUtc) + (cfg.wrapMinutes || 0) * 60_000);
+  if (exclude) busy = excludeBookingBusy(busy, events, exclude, cfg);
   const titled = titledDayCounts(events, cfg.eventTitle, cfg.ownerTz);
   const booked = db.bookedByDay(token.typeKey || null);
   let counts = titled ? mergeMaxCounts(booked, titled) : booked;
@@ -333,19 +331,19 @@ async function lookupManaged(res, key) {
 
 // The booking's owner-only companion events ("Prepare:" before, "Wrap up:"
 // after), if we can identify them. Stored id first; legacy bookings (pre-
-// reschedule) are found by summary + start time in a tight calendar window
-// around where the block should sit. Each kind knows where its block goes
-// relative to a booking interval, so book/reschedule/cancel share one path.
+// reschedule) are found by summary prefix + exact start + the guest's email
+// in the description (`companionMatches`) in a tight calendar window around
+// where the block should sit — never by time alone, another guest's block
+// could sit there. Spans come from lib/slots so the availability carve-out
+// and these edits agree; book/reschedule/cancel share one path.
 const COMPANIONS = {
   prep: {
     idCol: "prepGcalEventId", minutes: (cfg) => cfg.prepMinutes || 0, prefix: "Prepare:",
-    span: (cfg, startUtc) => [Date.parse(startUtc) - cfg.prepMinutes * 60_000, Date.parse(startUtc)],
     describe: (cfg, b) => `${cfg.prepMinutes}-min prep with ${b.guestName} <${b.guestEmail}>.`,
     setId: (id, evId) => db.setPrepEventId(id, evId),
   },
   wrap: {
     idCol: "wrapGcalEventId", minutes: (cfg) => cfg.wrapMinutes || 0, prefix: "Wrap up:",
-    span: (cfg, _startUtc, endUtc) => [Date.parse(endUtc), Date.parse(endUtc) + cfg.wrapMinutes * 60_000],
     describe: (cfg, b) => `${cfg.wrapMinutes}-min wrap-up with ${b.guestName} <${b.guestEmail}>.`,
     setId: (id, evId) => db.setWrapEventId(id, evId),
   },
@@ -354,34 +352,40 @@ async function findCompanionEventId(kind, cfg, booking) {
   const k = COMPANIONS[kind];
   if (booking[k.idCol]) return booking[k.idCol];
   if (!(k.minutes(cfg) > 0)) return null;
-  const [blockStart] = k.span(cfg, booking.startUtc, booking.endUtc);
+  const [blockStart] = companionSpan(kind, cfg, booking.startUtc, booking.endUtc);
   const evs = await gcal.listEvents(cfg.calendarId,
     new Date(blockStart - 60_000).toISOString(), new Date(blockStart + 60_000).toISOString());
-  const hit = (evs || []).find((e) =>
-    String(e.summary || "").startsWith(k.prefix) && e.start && Date.parse(e.start) === blockStart);
+  const hit = (evs || []).find((e) => companionMatches(e, kind, cfg, booking));
   return hit ? hit.id : null;
 }
-const findPrepEventId = (cfg, b) => findCompanionEventId("prep", cfg, b);
 
-// Move (or recreate) one companion block to follow a rescheduled booking.
-// Best-effort, like at booking time: the guest's event already moved.
+// Move one companion block to follow a rescheduled booking; recreate it when
+// there is none, or when the stored one is gone from the calendar (404/410
+// on the move — someone deleted the block by hand). Best-effort, like at
+// booking time: the guest's event already moved.
 async function moveCompanion(kind, cfg, booking, slot) {
   const k = COMPANIONS[kind];
   if (!(k.minutes(cfg) > 0)) return;
-  const [s, e] = k.span(cfg, slot.startUtc, slot.endUtc);
+  const [s, e] = companionSpan(kind, cfg, slot.startUtc, slot.endUtc);
   const startUtc = new Date(s).toISOString(), endUtc = new Date(e).toISOString();
+  const create = async () => (await gcal.createOwnerEvent({
+    calendarId: cfg.calendarId,
+    summary: `${k.prefix} ${(cfg.eventTitle || "Call: {name}").replace("{name}", booking.guestName)}`,
+    description: k.describe(cfg, booking),
+    startUtc, endUtc,
+  })).id;
   try {
     let id = await findCompanionEventId(kind, cfg, booking);
     if (id) {
-      await gcal.patchEventTime({ calendarId: cfg.calendarId, eventId: id, startUtc, endUtc, sendUpdates: "none" });
+      try {
+        await gcal.patchEventTime({ calendarId: cfg.calendarId, eventId: id, startUtc, endUtc, sendUpdates: "none" });
+      } catch (err) {
+        if (err.status !== 404 && err.status !== 410) throw err;
+        console.log(`[reschedule] ${kind} block ${id} gone from calendar — recreating`);
+        id = await create();
+      }
     } else {
-      const ev = await gcal.createOwnerEvent({
-        calendarId: cfg.calendarId,
-        summary: `${k.prefix} ${(cfg.eventTitle || "Call: {name}").replace("{name}", booking.guestName)}`,
-        description: k.describe(cfg, booking),
-        startUtc, endUtc,
-      });
-      id = ev.id;
+      id = await create();
     }
     if (id !== booking[k.idCol]) k.setId(booking.id, id);
   } catch (err) {
@@ -958,6 +962,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`clawd-calendar listening on http://127.0.0.1:${PORT}${gcal.FAKE ? "  (FAKE gcal mode)" : ""}`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`clawd-calendar listening on http://127.0.0.1:${PORT}${gcal.FAKE ? "  (FAKE gcal mode)" : ""}`);
+  });
+}
+
+// For tests (require()d, not run): the companion-block helpers.
+module.exports = { moveCompanion, deleteCompanion, findCompanionEventId };
