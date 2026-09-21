@@ -10,6 +10,8 @@
 //        --days fri --start 14:00 --end 16:00 --daily-cap 4
 //   node scripts/types.js --list
 //   node scripts/types.js --disable q     (kills all its links; --enable undoes)
+//   node scripts/types.js --set-window slop --days mon,tue,thu,fri   (live edit;
+//        --start/--end default 08:00/17:00; --days default = env window)
 //
 // Daily caps count per type — filling office hours doesn't consume the
 // default type's one-call-per-day budget.
@@ -43,6 +45,18 @@ for (const action of ["disable", "enable"]) {
     console.log(`${action}d "${key}"`);
     process.exit(0);
   }
+}
+
+if (has("set-window")) {
+  const key = flag("set-window");
+  const days = (flag("days") || config.window.days.join(",")).split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
+  const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const bad = days.filter((d) => !DAYS.includes(d));
+  if (!key || !days.length || bad.length) { console.error(`usage: node scripts/types.js --set-window <key> --days mon,tue,thu,fri [--start HH:MM] [--end HH:MM]${bad.length ? ` (bad day: ${bad.join(",")})` : ""}`); process.exit(1); }
+  const window = { days, start: flag("start") || "08:00", end: flag("end") || "17:00" };
+  if (!db.setTypeWindow(key, window)) { console.error(`no such type "${key}"`); process.exit(1); }
+  console.log(`[${key}] window → ${window.days.join("/")} ${window.start}–${window.end}`);
+  process.exit(0);
 }
 
 let label = null;

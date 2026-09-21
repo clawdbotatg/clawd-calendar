@@ -108,3 +108,13 @@ test("extraEmails round-trips through logBooking and setExtraEmails", () => {
   db.cancelBooking(id2);
   assert.equal(db.setExtraEmails(id2, ["x@y.zz"]), false);
 });
+
+test("setTypeWindow changes a live type's booking days in place", () => {
+  db.open();
+  assert.equal(db.getType("slop").window, null); // inherits env default
+  assert.ok(db.setTypeWindow("slop", { days: ["mon", "tue", "thu", "fri"], start: "08:00", end: "17:00" }));
+  assert.deepEqual(db.getType("slop").window.days, ["mon", "tue", "thu", "fri"]);
+  assert.ok(db.setTypeWindow("slop", null)); // back to inherit
+  assert.equal(db.getType("slop").window, null);
+  assert.equal(db.setTypeWindow("nope", { days: ["wed"], start: "08:00", end: "17:00" }), false);
+});
